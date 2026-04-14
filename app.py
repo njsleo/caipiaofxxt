@@ -6,28 +6,40 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # ==========================================
-# 0. 页面基础配置与 CSS 魔法
+# 0. 页面基础配置与 CSS 魔法 (极限紧凑小圆球版)
 # ==========================================
 st.set_page_config(page_title="快乐8 专业量化终端", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
-    /* 极致压缩上下边距 */
+    /* 1. 页面极致压缩 */
     .block-container { padding-top: 1rem; padding-bottom: 1rem; max-width: 98%; }
     header {visibility: hidden;}
     
-    /* 压缩列间距，让矩阵更紧凑 */
-    div[data-testid="column"] { padding: 0 2px !important; }
+    /* 2. 极限压缩行与列的间隙，消除多余空白 */
+    div[data-testid="column"] { padding: 0 1px !important; }
+    div[data-testid="stVerticalBlock"] { gap: 0.1rem !important; }
+    div[data-testid="stVerticalBlock"] > div { padding-bottom: 1px !important; }
     
-    /* 魔法：将方形按钮变成圆形/胶囊形 */
+    /* 3. 核心魔法：将所有选号按钮变成 32x32 的精美小正圆 */
     div[data-testid="stButton"] button {
+        width: 32px !important;        /* 强制宽度 */
+        height: 32px !important;       /* 强制高度 */
+        min-height: 32px !important;
         padding: 0 !important;
-        height: 34px;
-        min-height: 34px;
-        border-radius: 17px !important; /* 核心：高度一半的圆角，窄按钮变圆，宽按钮变胶囊 */
-        font-size: 13px;
-        font-weight: bold;
-        transition: all 0.2s; /* 增加点击动画过渡 */
+        border-radius: 50% !important; /* 50% 即为完美正圆 */
+        font-size: 13px !important;
+        font-weight: 600;
+        margin: 0 auto;                /* 在列中完美居中 */
+        box-shadow: 0 2px 3px rgba(0,0,0,0.08); /* 微微的立体感 */
+        transition: all 0.15s;
+    }
+
+    /* 4. 特例保护：让带有“图”字样底部大按钮恢复成宽条状，不要变圆 */
+    div[data-testid="stButton"] button:has(p:contains("图")),
+    div[data-testid="stButton"] button:has(p:contains("重新")) {
+        width: 100% !important;
+        border-radius: 6px !important;
     }
 </style>
 """, unsafe_allow_html=True)
