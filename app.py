@@ -160,19 +160,18 @@ with right_col:
     latest_nums = latest_row['中奖号码']
     
     st.markdown(f"<span style='font-size:14px; font-weight:bold;'>🏆 第 {latest_issue} 期 开奖号码</span>", unsafe_allow_html=True)
-    html_balls = "".join([f"<div style='display:inline-block; width:26px; height:26px; line-height:26px; text-align:center; background-color:#FF4B4B; color:white; border-radius:50%; margin:2px 3px 2px 0; font-size:12px; font-weight:bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2);'>{n}</div>" for n in latest_nums])
-    st.markdown(html_balls, unsafe_allow_html=True)
     
-    # 【优化点1】：增加下拉框与开奖号码之间的垂直间距
-    st.markdown("<div style='height: 18px;'></div>", unsafe_allow_html=True)
+    # 修复碰撞：加大了 margin-bottom，并包在一个有强制间距的 div 里
+    html_balls = "".join([f"<div style='display:inline-block; width:26px; height:26px; line-height:26px; text-align:center; background-color:#FF4B4B; color:white; border-radius:50%; margin:4px 4px 15px 0; font-size:12px; font-weight:bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2);'>{n}</div>" for n in latest_nums])
+    st.markdown(f"<div style='margin-bottom: 25px;'>{html_balls}</div>", unsafe_allow_html=True)
     
-    # 【优化点2】：使用 columns 将下拉框的宽度限制为原本的一半
+    # 2. 窄版玩法下拉框
     sel_c1, sel_c2 = st.columns([1.2, 1]) 
     with sel_c1:
         play_mode = st.selectbox("选择玩法", [f"选{i}" for i in range(1, 11)], index=2, label_visibility="collapsed")
         play_n = int(play_mode.replace("选", ""))
     
-    # 快捷筛选区
+    # 3. 快捷筛选区
     btn_cols = st.columns(7)
     filters = ["奇", "偶", "大", "小", "质", "合", "清"]
     for i, f in enumerate(filters):
@@ -182,7 +181,7 @@ with right_col:
 
     st.markdown("<div style='height: 5px;'></div>", unsafe_allow_html=True)
 
-    # 高密度 8x10 号码矩阵
+    # 4. 高密度 8x10 号码矩阵
     with st.container(border=True):
         for row in range(8):
             cols = st.columns(10)
@@ -199,7 +198,7 @@ with right_col:
                     st.session_state.analyze_target = f"{num:02d}"
                     st.rerun()
 
-    # 底部结算栏
+    # 5. 底部结算栏
     selected_count = len(st.session_state.selected_nums)
     bets = math.comb(selected_count, play_n) if selected_count >= play_n else 0
     cost = bets * 2
