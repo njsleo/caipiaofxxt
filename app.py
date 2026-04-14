@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # ==========================================
-# 0. 页面基础配置与 CSS 魔法 (极限紧凑小圆球版)
+# 0. 页面基础配置与 CSS 魔法
 # ==========================================
 st.set_page_config(page_title="快乐8 专业量化终端", layout="wide", initial_sidebar_state="collapsed")
 
@@ -23,19 +23,19 @@ st.markdown("""
     
     /* 3. 核心魔法：将所有选号按钮变成 32x32 的精美小正圆 */
     div[data-testid="stButton"] button {
-        width: 32px !important;        /* 强制宽度 */
-        height: 32px !important;       /* 强制高度 */
+        width: 32px !important;
+        height: 32px !important;
         min-height: 32px !important;
         padding: 0 !important;
-        border-radius: 50% !important; /* 50% 即为完美正圆 */
+        border-radius: 50% !important;
         font-size: 13px !important;
         font-weight: 600;
-        margin: 0 auto;                /* 在列中完美居中 */
-        box-shadow: 0 2px 3px rgba(0,0,0,0.08); /* 微微的立体感 */
+        margin: 0 auto;
+        box-shadow: 0 2px 3px rgba(0,0,0,0.08);
         transition: all 0.15s;
     }
 
-    /* 4. 特例保护：让带有“图”字样底部大按钮恢复成宽条状，不要变圆 */
+    /* 4. 特例保护：保持特定功能按钮为宽条状 */
     div[data-testid="stButton"] button:has(p:contains("图")),
     div[data-testid="stButton"] button:has(p:contains("重新")) {
         width: 100% !important;
@@ -154,21 +154,25 @@ with left_col:
 # 右侧区域：紧凑型中控台
 # ------------------------------------------
 with right_col:
-    # --- 新增：展示最新一期真实开奖号码 ---
+    # 1. 展示最新一期真实开奖号码
     latest_row = df_raw.iloc[-1]
     latest_issue = latest_row['期号']
     latest_nums = latest_row['中奖号码']
     
     st.markdown(f"<span style='font-size:14px; font-weight:bold;'>🏆 第 {latest_issue} 期 开奖号码</span>", unsafe_allow_html=True)
-    
-    # 用 HTML 画一排精美的红色圆球
-    html_balls = "".join([f"<div style='display:inline-block; width:26px; height:26px; line-height:26px; text-align:center; background-color:#FF4B4B; color:white; border-radius:50%; margin:2px 3px 8px 0; font-size:12px; font-weight:bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2);'>{n}</div>" for n in latest_nums])
+    html_balls = "".join([f"<div style='display:inline-block; width:26px; height:26px; line-height:26px; text-align:center; background-color:#FF4B4B; color:white; border-radius:50%; margin:2px 3px 2px 0; font-size:12px; font-weight:bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2);'>{n}</div>" for n in latest_nums])
     st.markdown(html_balls, unsafe_allow_html=True)
     
-    # 玩法与快捷筛选区
-    play_mode = st.selectbox("选择玩法", [f"选{i}" for i in range(1, 11)], index=2, label_visibility="collapsed")
-    play_n = int(play_mode.replace("选", ""))
+    # 【优化点1】：增加下拉框与开奖号码之间的垂直间距
+    st.markdown("<div style='height: 18px;'></div>", unsafe_allow_html=True)
     
+    # 【优化点2】：使用 columns 将下拉框的宽度限制为原本的一半
+    sel_c1, sel_c2 = st.columns([1.2, 1]) 
+    with sel_c1:
+        play_mode = st.selectbox("选择玩法", [f"选{i}" for i in range(1, 11)], index=2, label_visibility="collapsed")
+        play_n = int(play_mode.replace("选", ""))
+    
+    # 快捷筛选区
     btn_cols = st.columns(7)
     filters = ["奇", "偶", "大", "小", "质", "合", "清"]
     for i, f in enumerate(filters):
@@ -178,7 +182,7 @@ with right_col:
 
     st.markdown("<div style='height: 5px;'></div>", unsafe_allow_html=True)
 
-    # 高密度 8x10 号码矩阵 (变身小圆球)
+    # 高密度 8x10 号码矩阵
     with st.container(border=True):
         for row in range(8):
             cols = st.columns(10)
