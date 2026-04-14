@@ -128,3 +128,93 @@ st.plotly_chart(fig, use_container_width=True)
 # 底层数据
 with st.expander("查看原始数据明细"):
     st.dataframe(df_final[['期号', '中奖号码', '遗漏值', '二阶遗漏', 'MA5']].iloc[::-1], use_container_width=True)
+    import streamlit as st
+import math
+
+st.markdown("---")
+st.subheader("🎛️ 智能选号与奖金计算器")
+
+# ==========================================
+# 1. 初始化状态 (大脑记忆区)
+# ==========================================
+if 'selected_nums' not in st.session_state:
+    st.session_state.selected_nums = set()
+
+# 快捷操作回调函数
+def apply_filter(filter_type):
+    st.session_state.selected_nums.clear()
+    nums = range(1, 81)
+    if filter_type == "奇":
+        st.session_state.selected_nums.update(n for n in nums if n % 2 != 0)
+    elif filter_type == "偶":
+        st.session_state.selected_nums.update(n for n in nums if n % 2 == 0)
+    elif filter_type == "大":
+        st.session_state.selected_nums.update(n for n in nums if n > 40)
+    elif filter_type == "小":
+        st.session_state.selected_nums.update(n for n in nums if n <= 40)
+    elif filter_type == "质":
+        primes = [2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79]
+        st.session_state.selected_nums.update(primes)
+    elif filter_type == "合":
+        primes = [2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79]
+        st.session_state.selected_nums.update(n for n in nums if n not in primes and n != 1)
+    elif filter_type == "清":
+        pass # 前面已经 clear() 了
+
+# ==========================================
+# 2. 绘制 8x10 选号矩阵
+# ==========================================
+st.write("**号码矩阵**")
+# 快捷按钮排排坐
+f_cols = st.columns(8)
+filters = ["奇", "偶", "大", "小", "质", "合", "清"]
+for i, f in enumerate(filters):
+    if f_cols[i].button(f, use_container_width=True, key=f"btn_{f}"):
+        apply_filter(f)
+
+st.write("") # 留点空隙
+container = st.container()
+with container:
+    for row in range(8):
+        cols = st.columns(10)
+        for col in range(10):
+            num = row * 10 + col + 1
+            is_selected = num in st.session_state.selected_nums
+            
+            # 用 checkbox 模拟高密度按钮
+            changed = cols[col].checkbox(f"{num:02d}", value=is_selected, key=f"chk_{num}")
+            
+            # 同步状态
+            if changed and num not in st.session_state.selected_nums:
+                st.session_state.selected_nums.add(num)
+            elif not changed and num in st.session_state.selected_nums:
+                st.session_state.selected_nums.remove(num)
+
+# ==========================================
+# 3. 奖金计算与出图控制区
+# ==========================================
+st.markdown("---")
+c1, c2, c3 = st.columns([1, 2, 1])
+
+# 玩法选择
+play_mode = c1.selectbox("选择玩法", [f"选{i}" for i in range(1, 11)], index=2) # 默认选3
+play_n = int(play_mode.replace("选", ""))
+
+selected_count = len(st.session_state.selected_nums)
+
+# 计算注数 (组合数学 C(n, k))
+if selected_count >= play_n:
+    bets = math.comb(selected_count, play_n)
+else:
+    bets = 0
+
+cost = bets * 2
+
+c2.markdown(f"<h4 style='text-align: center;'>已选 {selected_count} 个号 | 共 {bets} 注 | 投入 {cost} 元</h4>", unsafe_allow_html=True)
+
+if c3.button("🚀 选中条件出图", type="primary", use_container_width=True):
+    if selected_count == 0:
+        st.warning("请先在上方选择号码！")
+    else:
+        st.success(f"准备为您绘制 {sorted(list(st.session_state.selected_nums))} 的专属走势图！")
+        # 这里预留了与你之前图表联动的接口
