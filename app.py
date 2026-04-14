@@ -1,175 +1,130 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
+import requests
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # ==========================================
 # 0. 页面基础配置
 # ==========================================
-st.set_page_config(page_title="高级彩票量化分析系统", layout="wide", initial_sidebar_state="expanded")
-st.title("📊 快乐8 量化分析工作台 (本地回测版)")
+st.set_page_config(page_title="快乐8 高级量化分析平台", layout="wide")
+st.title("📈 快乐8 实时量化分析工作台")
 
 # ==========================================
-# 1. 数据引擎 (Mock Data Generator)
+# 1. 密钥读取 (Secrets 管理)
 # ==========================================
-@st.cache_data
-def generate_fallback_data(issue_count=200):
-    """生成高质量的模拟开奖数据用于前端研发"""
-    records = []
-    base_issue = 2024001
-    for i in range(issue_count):
-        # 快乐8：从1-80中随机抽取20个不重复的数字
-        nums = sorted(np.random.choice(range(1, 81), 20, replace=False))
-        str_nums = [f"{n:02d}" for n in nums]
-        records.append({"期号": str(base_issue + i), "中奖号码": str_nums})
-    return pd.DataFrame(records)
-
-# 加载200期模拟数据
-df = generate_fallback_data(200)
+try:
+    # 尝试从 Streamlit Secrets 中读取密钥
+    APP_ID = st.secrets["mxnzp_api"]["app_id"]
+    APP_SECRET = st.secrets["mxnzp_api"]["app_secret"]
+except Exception:
+    st.error("❌ 未在 Secrets 中找到密钥！请确保您已在 streamlit.io 后台设置了 [mxnzp_api] 块。")
+    st.info("设置格式参考：\n\n[mxnzp_api]\napp_id = \"您的ID\"\napp_secret = \"您的Secret\"")
+    st.stop()
 
 # ==========================================
-# 2. 核心量化算法库
+# 2. 数据获取引擎 (API 连接)
 # ==========================================
-def calc_advanced_metrics(df, target_num):
-    """计算一阶遗漏、二阶遗漏与大小奇偶属性"""
-    
-    # 2.1 一阶遗漏 (Omission)
-    omissions = []
-    current_miss = 0
-    for nums in df['中奖号码']:
-        if target_num in nums:
-            current_miss = 0
+@st.cache_data(ttl=1800) # 缓存30分钟
+def fetch_data(issue_count=50):
+    url = "https://www.mxnzp.com/api/lottery/common/history"
+    # 限制最大50期（免费接口限制）
+    params = {
+        "code": "kl8",
+        "size": min(issue_count, 50),
+        "app_id": APP_ID,
+        "app_secret": APP_SECRET
+    }
+    try:
+        res = requests.get(url, params=params, timeout=10).json()
+        if res.get("code") == 1:
+            data = res.get("data", [])
+            records = [{"期号": i["expect"], "中奖号码": i["openCode"].split(',')} for i in data]
+            # 翻转为正序（时间从旧到新）以便画线
+            return pd.DataFrame(records).iloc[::-1].reset_index(drop=True), "success"
         else:
-            current_miss += 1
-        omissions.append(current_miss)
+            return pd.DataFrame(), res.get("msg", "未知错误")
+    except Exception as e:
+        return pd.DataFrame(), str(e)
+
+# ==========================================
+# 3. 核心算法库 (一阶/二阶遗漏)
+# ==========================================
+def run_analysis(df, target_num):
+    # 3.1 计算一阶遗漏
+    omissions = []
+    curr = 0
+    for row in df['中奖号码']:
+        if target_num in row:
+            curr = 0
+        else:
+            curr += 1
+        omissions.append(curr)
     df['遗漏值'] = omissions
     
-    # 2.2 二阶遗漏 (Second-Order Omission) - 核心难点！
-    # 逻辑：当前这个【遗漏值】上次出现距今隔了多少期？
-    second_order = []
-    last_seen_dict = {} # 记录每个遗漏值最后一次出现的索引(期数)
-    
-    for i, val in enumerate(omissions):
-        if val in last_seen_dict:
-            # 当前期数 - 上次出现这个遗漏值的期数
-            so_val = i - last_seen_dict[val]
+    # 3.2 计算二阶遗漏 (遗漏值间隔)
+    so_list = []
+    last_pos = {} # 记录每个遗漏值上次出现的索引
+    for i, v in enumerate(omissions):
+        if v in last_pos:
+            so_list.append(i - last_pos[v])
         else:
-            # 如果这个遗漏值是历史第一次出现，二阶遗漏记为 0 或者当前期数
-            so_val = 0 
-        second_order.append(so_val)
-        last_seen_dict[val] = i # 更新该遗漏值最后出现的位置
-        
-    df['二阶遗漏'] = second_order
+            so_list.append(0)
+        last_pos[v] = i
+    df['二阶遗漏'] = so_list
     
-    # 2.3 移动平均线 (MA5 / MA10)
-    df['MA5'] = df['遗漏值'].rolling(window=5, min_periods=1).mean()
-    df['MA10'] = df['遗漏值'].rolling(window=10, min_periods=1).mean()
-    
-    # 2.4 基础属性判定 (奇偶、大小)
-    target_int = int(target_num)
-    attr_parity = "奇数" if target_int % 2 != 0 else "偶数"
-    attr_size = "小数" if target_int <= 40 else "大数"
-    
-    return df, attr_parity, attr_size
+    # 3.3 计算均线
+    df['MA5'] = df['遗漏值'].rolling(window=5).mean()
+    return df
 
 # ==========================================
-# 3. 前端 UI 与交互控制 (Sidebar)
+# 4. UI 渲染与逻辑控制
 # ==========================================
-st.sidebar.markdown("### 🎛️ 算法参数面板")
-target_num = st.sidebar.selectbox("🎯 选择追踪号码", [f"{i:02d}" for i in range(1, 81)], index=7) # 默认选08
+# 4.1 数据拉取
+with st.spinner("正在同步全网开奖数据..."):
+    df_raw, status = fetch_data(50)
 
-# 运行算法计算当前号码的完整数据
-df_calc, attr_parity, attr_size = calc_advanced_metrics(df.copy(), target_num)
+if df_raw.empty:
+    st.error(f"数据加载失败: {status}")
+    st.stop()
 
+# 4.2 侧边栏控制
+st.sidebar.header("🎯 号码追踪")
+target = st.sidebar.selectbox("选择分析号码", [f"{i:02d}" for i in range(1, 81)], index=7)
 st.sidebar.markdown("---")
-st.sidebar.markdown(f"**号码属性：** `{attr_parity}` | `{attr_size}`")
+st.sidebar.write("**算法说明：**")
+st.sidebar.caption("一阶遗漏：该号码连续未开出的期数。")
+st.sidebar.caption("二阶遗漏：当前遗漏值距离上次出现的时间跨度。")
 
-# 过滤器开关 (模拟复杂软件的筛选逻辑)
-show_second_order = st.sidebar.checkbox("👁️ 显示二阶遗漏线", value=True)
-show_ma10 = st.sidebar.checkbox("👁️ 显示10期均线 (MA10)", value=False)
+# 4.3 运算分析
+df_final = run_analysis(df_raw.copy(), target)
 
-# ==========================================
-# 4. 图表渲染引擎 (Plotly 高级定制)
-# ==========================================
-# 顶部指标卡片
-col1, col2, col3, col4 = st.columns(4)
-current_miss = df_calc['遗漏值'].iloc[-1]
-max_miss = df_calc['遗漏值'].max()
-current_so = df_calc['二阶遗漏'].iloc[-1]
+# 4.4 顶部指标
+c1, c2, c3 = st.columns(3)
+c1.metric("当前遗漏", df_final['遗漏值'].iloc[-1])
+c2.metric("当前二阶遗漏", df_final['二阶遗漏'].iloc[-1])
+c3.metric("5期平均遗漏", round(df_final['MA5'].iloc[-1], 2))
 
-col1.metric(label=f"[{target_num}] 当前遗漏", value=current_miss)
-col2.metric(label="历史最大遗漏", value=max_miss)
-col3.metric(label="当前二阶遗漏", value=current_so, help="该遗漏值距离上次出现间隔的期数")
-col4.metric(label="5期均值趋向", value=round(df_calc['MA5'].iloc[-1], 2))
+# 4.5 专业图表绘制
+fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, row_heights=[0.6, 0.4])
 
-st.markdown("---")
+# 上层：一阶遗漏趋势
+fig.add_trace(go.Scatter(x=df_final['期号'], y=df_final['遗漏值'], mode='lines+markers', name='一阶遗漏', line=dict(color='#FF4B4B', width=2)), row=1, col=1)
+fig.add_trace(go.Scatter(x=df_final['期号'], y=df_final['MA5'], mode='lines', name='5期均线', line=dict(color='#F2B134', width=1, dash='dot')), row=1, col=1)
 
-# 构建专业双层金融图表
-fig = make_subplots(
-    rows=2, cols=1, 
-    shared_xaxes=True, 
-    vertical_spacing=0.03, 
-    row_heights=[0.65, 0.35], # 上下高度比
-    subplot_titles=(f"号码 {target_num} 基础遗漏走势", "量能与二阶形态分析")
-)
+# 下层：二阶遗漏与动能
+df_final['动能'] = df_final['遗漏值'] - df_final['MA5']
+bar_colors = ['#FF4B4B' if x > 0 else '#00D166' for x in df_final['动能']]
+fig.add_trace(go.Bar(x=df_final['期号'], y=df_final['动能'], name='量能脉冲', marker_color=bar_colors), row=2, col=1)
+fig.add_trace(go.Scatter(x=df_final['期号'], y=df_final['二阶遗漏'], name='二阶走势', line=dict(color='#00B4D8', width=1.5)), row=2, col=1)
 
-# 【上层】遗漏走势图
-fig.add_trace(go.Scatter(
-    x=df_calc['期号'], y=df_calc['遗漏值'], 
-    mode='lines+markers', name='一阶遗漏', 
-    line=dict(color='#ef5350', width=2),
-    marker=dict(size=4)
-), row=1, col=1)
-
-fig.add_trace(go.Scatter(
-    x=df_calc['期号'], y=df_calc['MA5'], 
-    mode='lines', name='MA5 (黄线)', 
-    line=dict(color='#ffee58', width=1.5, dash='solid')
-), row=1, col=1)
-
-if show_ma10:
-    fig.add_trace(go.Scatter(
-        x=df_calc['期号'], y=df_calc['MA10'], 
-        mode='lines', name='MA10 (紫线)', 
-        line=dict(color='#ab47bc', width=1.5, dash='dot')
-    ), row=1, col=1)
-
-# 【下层】MACD红绿柱 & 二阶遗漏
-df_calc['动能MACD'] = df_calc['遗漏值'] - df_calc['MA5']
-colors = ['#ef5350' if val > 0 else '#26a69a' for val in df_calc['动能MACD']]
-
-fig.add_trace(go.Bar(
-    x=df_calc['期号'], y=df_calc['动能MACD'], 
-    marker_color=colors, name='多空动能',
-    opacity=0.8
-), row=2, col=1)
-
-if show_second_order:
-    fig.add_trace(go.Scatter(
-        x=df_calc['期号'], y=df_calc['二阶遗漏'], 
-        mode='lines', name='二阶遗漏', 
-        line=dict(color='#29b6f6', width=1.5),
-        yaxis='y3' # 绑定到右侧Y轴
-    ), row=2, col=1)
-
-# 【核心排版】暗黑专业风格定制
-fig.update_layout(
-    height=650, 
-    paper_bgcolor="#121212", 
-    plot_bgcolor="#1e1e1e", 
-    font=dict(color="#e0e0e0"),
-    hovermode="x unified", # 鼠标悬停时显示一条竖线上的所有数据！
-    margin=dict(l=10, r=10, t=40, b=10),
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-)
-
-fig.update_xaxes(showgrid=True, gridcolor='#333333', zeroline=False)
-fig.update_yaxes(showgrid=True, gridcolor='#333333', zeroline=False, row=1, col=1)
-fig.update_yaxes(title_text="MACD动能", showgrid=True, gridcolor='#333333', zeroline=True, zerolinecolor='#666666', row=2, col=1)
+# 统一样式
+fig.update_layout(height=600, template="plotly_dark", hovermode="x unified", margin=dict(l=10, r=10, t=30, b=10))
+fig.update_xaxes(showgrid=False)
+fig.update_yaxes(gridcolor='#333333')
 
 st.plotly_chart(fig, use_container_width=True)
 
-# 底部数据表
-with st.expander("🛠️ 查看底层运算明细表"):
-    st.dataframe(df_calc[['期号', '遗漏值', '二阶遗漏', 'MA5', 'MA10', '动能MACD']].iloc[::-1], use_container_width=True)
+# 底层数据
+with st.expander("查看原始数据明细"):
+    st.dataframe(df_final[['期号', '中奖号码', '遗漏值', '二阶遗漏', 'MA5']].iloc[::-1], use_container_width=True)
