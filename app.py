@@ -12,16 +12,13 @@ st.set_page_config(page_title="快乐8 专业量化终端", layout="wide", initi
 
 st.markdown("""
 <style>
-    /* 1. 页面极致压缩 */
     .block-container { padding-top: 1rem; padding-bottom: 1rem; max-width: 98%; }
     header {visibility: hidden;}
-    
-    /* 2. 极限压缩行与列的间隙，消除多余空白 */
     div[data-testid="column"] { padding: 0 1px !important; }
     div[data-testid="stVerticalBlock"] { gap: 0.1rem !important; }
     div[data-testid="stVerticalBlock"] > div { padding-bottom: 1px !important; }
     
-    /* 3. 核心魔法：将所有选号按钮变成 32x32 的精美小正圆 */
+    /* 核心魔法：将所有选号按钮变成 32x32 的精美小正圆 */
     div[data-testid="stButton"] button {
         width: 32px !important;
         height: 32px !important;
@@ -34,12 +31,10 @@ st.markdown("""
         box-shadow: 0 2px 3px rgba(0,0,0,0.08);
         transition: all 0.15s;
     }
-
-    /* 4. 特例保护：保持特定功能按钮为宽条状 */
+    /* 特例保护 */
     div[data-testid="stButton"] button:has(p:contains("图")),
     div[data-testid="stButton"] button:has(p:contains("重新")) {
-        width: 100% !important;
-        border-radius: 6px !important;
+        width: 100% !important; border-radius: 6px !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -55,38 +50,19 @@ except Exception:
     st.stop()
 
 @st.cache_data(ttl=1800)
-def fetch_data(issue_count=50):
+def fetch_data(issue_count=100): # 增加到100期，K线更好看
     url = "https://www.mxnzp.com/api/lottery/common/history"
     params = {"code": "kl8", "size": min(issue_count, 50), "app_id": APP_ID, "app_secret": APP_SECRET}
     try:
         res = requests.get(url, params=params, timeout=10).json()
         if res.get("code") == 1:
             data = res.get("data", [])
-            records = [{"期号": i["expect"], "中奖号码": i["openCode"].split(',')} for i in data]
+            records = [{"期号": i["expect"], "中奖号码": [int(x) for x in i["openCode"].split(',')]} for i in data]
             return pd.DataFrame(records).iloc[::-1].reset_index(drop=True), "success"
         else:
             return pd.DataFrame(), res.get("msg", "未知错误")
     except Exception as e:
         return pd.DataFrame(), str(e)
-
-def run_analysis(df, target_num):
-    omissions = []
-    curr = 0
-    for row in df['中奖号码']:
-        if target_num in row: curr = 0
-        else: curr += 1
-        omissions.append(curr)
-    df['遗漏值'] = omissions
-    
-    so_list = []
-    last_pos = {} 
-    for i, v in enumerate(omissions):
-        if v in last_pos: so_list.append(i - last_pos[v])
-        else: so_list.append(0)
-        last_pos[v] = i
-    df['二阶遗漏'] = so_list
-    df['MA5'] = df['遗漏值'].rolling(window=5).mean()
-    return df
 
 with st.spinner("正在连接数据中心..."):
     df_raw, status = fetch_data(50)
@@ -96,12 +72,9 @@ if df_raw.empty:
     st.stop()
 
 # ==========================================
-# 2. 全局状态管理
+# 2. 全局状态与快捷工具
 # ==========================================
-if 'selected_nums' not in st.session_state:
-    st.session_state.selected_nums = set()
-if 'analyze_target' not in st.session_state:
-    st.session_state.analyze_target = "08"
+if 'selected_nums' not in st.session_state: st.session_state.selected_nums = set()
 
 def apply_filter(f_type):
     st.session_state.selected_nums.clear()
@@ -118,60 +91,118 @@ def apply_filter(f_type):
         st.session_state.selected_nums.update(n for n in nums if n not in primes and n != 1)
 
 # ==========================================
-# 3. 核心布局：左右分栏 (7 : 3)
+# 3. 核心量化算法引擎 (生成K线与MACD)
+# ==========================================
+def generate_strategy_kline(df, strategy, selected_nums, min_hits):
+    records = []
+    curr_val = 1000.0 # 初始净值资金
+    
+    for idx, row in df.iterrows():
+        nums = row['中奖号码']
+        is_hit = False
+        
+        # 多维条件判定逻辑
+        if strategy == "自定义选号狙击":
+            hits = sum(1 for n in selected_nums if n in nums)
+            is_hit = hits >= min_hits
+        elif strategy == "全局大数压制":
+            is_hit = sum(1 for n in nums if n > 40) >= 11
+        elif strategy == "全局奇数压制":
+            is_hit = sum(1 for n in nums if n % 2 != 0) >= 11
+        elif strategy == "极端和值爆发":
+            is_hit = sum(nums) > 810
+            
+        # 生成 K 线四个价格
+        open_val = curr_val
+        if is_hit:
+            close_val = open_val + 15  # 阳线大涨
+            high_val = close_val + 2
+            low_val = open_val - 1
+        else:
+            close_val = open_val - 4   # 阴线阴跌
+            high_val = open_val + 1
+            low_val = close_val - 2
+            
+        curr_val = close_val
+        records.append({
+            "期号": row['期号'], "Open": open_val, "High": high_val, "Low": low_val, "Close": close_val, "is_hit": is_hit
+        })
+        
+    df_k = pd.DataFrame(records)
+    # 计算 MA 均线
+    df_k['MA5'] = df_k['Close'].rolling(window=5, min_periods=1).mean()
+    df_k['MA10'] = df_k['Close'].rolling(window=10, min_periods=1).mean()
+    
+    # 计算专业 MACD
+    ema_fast = df_k['Close'].ewm(span=12, adjust=False).mean()
+    ema_slow = df_k['Close'].ewm(span=26, adjust=False).mean()
+    df_k['MACD'] = ema_fast - ema_slow
+    df_k['DEA'] = df_k['MACD'].ewm(span=9, adjust=False).mean()
+    df_k['MACD_HIST'] = df_k['MACD'] - df_k['DEA']
+    
+    return df_k
+
+# ==========================================
+# 4. 核心布局：左右分栏 (7 : 3)
 # ==========================================
 left_col, right_col = st.columns([7, 3], gap="medium")
 
 # ------------------------------------------
-# 左侧区域：大屏专业图表
+# 左侧区域：策略回测 K 线引擎
 # ------------------------------------------
 with left_col:
-    c1, c2, c3, c4 = st.columns([2, 2, 2, 4])
-    c1.markdown(f"<h3 style='margin:0;'>分析目标: <span style='color:#FF4B4B;'>{st.session_state.analyze_target}</span></h3>", unsafe_allow_html=True)
-    
-    df_final = run_analysis(df_raw.copy(), st.session_state.analyze_target)
-    
-    c2.metric("当前一阶遗漏", df_final['遗漏值'].iloc[-1])
-    c3.metric("当前二阶拐点", df_final['二阶遗漏'].iloc[-1])
-    
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.6, 0.4])
+    top_c1, top_c2, top_c3 = st.columns([2, 1, 3])
+    with top_c1:
+        strategy_mode = st.selectbox("🔮 量化回测策略模型", ["自定义选号狙击", "全局大数压制", "全局奇数压制", "极端和值爆发"])
+    with top_c2:
+        hit_target = 2
+        if strategy_mode == "自定义选号狙击":
+            hit_target = st.number_input("条件: 命中数 ≥", min_value=1, max_value=20, value=2)
+            
+    if strategy_mode == "自定义选号狙击" and len(st.session_state.selected_nums) == 0:
+        st.warning("⚠️ 请先在右侧面板点选至少 1 个号码，以生成回测 K 线。")
+    else:
+        # 生成 K 线数据
+        df_kline = generate_strategy_kline(df_raw, strategy_mode, st.session_state.selected_nums, hit_target)
+        
+        # 绘制终极金融图表
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
+        
+        # 上部：K线与均线
+        fig.add_trace(go.Candlestick(
+            x=df_kline['期号'], open=df_kline['Open'], high=df_kline['High'], low=df_kline['Low'], close=df_kline['Close'],
+            increasing_line_color='#FF4B4B', decreasing_line_color='#00D166', name='净值K线'
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df_kline['期号'], y=df_kline['MA5'], mode='lines', name='MA5', line=dict(color='#F2B134', width=1)), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df_kline['期号'], y=df_kline['MA10'], mode='lines', name='MA10', line=dict(color='#00B4D8', width=1)), row=1, col=1)
 
-    fig.add_trace(go.Scatter(x=df_final['期号'], y=df_final['遗漏值'], mode='lines+markers', name='一阶遗漏', line=dict(color='#FF4B4B', width=2)), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df_final['期号'], y=df_final['MA5'], mode='lines', name='5期均线', line=dict(color='#F2B134', width=1, dash='dot')), row=1, col=1)
+        # 下部：MACD 柱状图
+        macd_colors = ['#FF4B4B' if val > 0 else '#00D166' for val in df_kline['MACD_HIST']]
+        fig.add_trace(go.Bar(x=df_kline['期号'], y=df_kline['MACD_HIST'], marker_color=macd_colors, name='MACD量能'), row=2, col=1)
+        fig.add_trace(go.Scatter(x=df_kline['期号'], y=df_kline['MACD'], mode='lines', name='DIF', line=dict(color='#FFF', width=1)), row=2, col=1)
+        fig.add_trace(go.Scatter(x=df_kline['期号'], y=df_kline['DEA'], mode='lines', name='DEA', line=dict(color='#F2B134', width=1)), row=2, col=1)
 
-    df_final['动能'] = df_final['遗漏值'] - df_final['MA5']
-    bar_colors = ['#FF4B4B' if x > 0 else '#00D166' for x in df_final['动能']]
-    fig.add_trace(go.Bar(x=df_final['期号'], y=df_final['动能'], name='多空脉冲', marker_color=bar_colors), row=2, col=1)
-    fig.add_trace(go.Scatter(x=df_final['期号'], y=df_final['二阶遗漏'], name='二阶走势', line=dict(color='#00B4D8', width=1.5)), row=2, col=1)
-
-    fig.update_layout(height=650, template="plotly_dark", hovermode="x unified", margin=dict(l=0, r=0, t=10, b=0))
-    fig.update_xaxes(showgrid=False)
-    fig.update_yaxes(gridcolor='#333333')
-    
-    st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(height=650, template="plotly_dark", hovermode="x unified", margin=dict(l=0, r=0, t=10, b=0), xaxis_rangeslider_visible=False)
+        fig.update_yaxes(gridcolor='#333333')
+        st.plotly_chart(fig, use_container_width=True)
 
 # ------------------------------------------
 # 右侧区域：紧凑型中控台
 # ------------------------------------------
 with right_col:
-    # 1. 展示最新一期真实开奖号码
     latest_row = df_raw.iloc[-1]
     latest_issue = latest_row['期号']
     latest_nums = latest_row['中奖号码']
     
     st.markdown(f"<span style='font-size:14px; font-weight:bold;'>🏆 第 {latest_issue} 期 开奖号码</span>", unsafe_allow_html=True)
-    
-    # 修复碰撞：加大了 margin-bottom，并包在一个有强制间距的 div 里
-    html_balls = "".join([f"<div style='display:inline-block; width:26px; height:26px; line-height:26px; text-align:center; background-color:#FF4B4B; color:white; border-radius:50%; margin:4px 4px 15px 0; font-size:12px; font-weight:bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2);'>{n}</div>" for n in latest_nums])
+    html_balls = "".join([f"<div style='display:inline-block; width:26px; height:26px; line-height:26px; text-align:center; background-color:#FF4B4B; color:white; border-radius:50%; margin:4px 4px 15px 0; font-size:12px; font-weight:bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2);'>{n:02d}</div>" for n in latest_nums])
     st.markdown(f"<div style='margin-bottom: 25px;'>{html_balls}</div>", unsafe_allow_html=True)
     
-    # 2. 窄版玩法下拉框
     sel_c1, sel_c2 = st.columns([1.2, 1]) 
     with sel_c1:
-        play_mode = st.selectbox("选择玩法", [f"选{i}" for i in range(1, 11)], index=2, label_visibility="collapsed")
+        play_mode = st.selectbox("选择玩法", [f"选{i}" for i in range(1, 11)], index=4, label_visibility="collapsed") # 默认选5
         play_n = int(play_mode.replace("选", ""))
     
-    # 3. 快捷筛选区
     btn_cols = st.columns(7)
     filters = ["奇", "偶", "大", "小", "质", "合", "清"]
     for i, f in enumerate(filters):
@@ -181,7 +212,6 @@ with right_col:
 
     st.markdown("<div style='height: 5px;'></div>", unsafe_allow_html=True)
 
-    # 4. 高密度 8x10 号码矩阵
     with st.container(border=True):
         for row in range(8):
             cols = st.columns(10)
@@ -191,14 +221,10 @@ with right_col:
                 btn_type = "primary" if is_selected else "secondary"
                 
                 if cols[col].button(f"{num:02d}", type=btn_type, key=f"n_{num}"):
-                    if is_selected:
-                        st.session_state.selected_nums.remove(num)
-                    else:
-                        st.session_state.selected_nums.add(num)
-                    st.session_state.analyze_target = f"{num:02d}"
+                    if is_selected: st.session_state.selected_nums.remove(num)
+                    else: st.session_state.selected_nums.add(num)
                     st.rerun()
 
-    # 5. 底部结算栏
     selected_count = len(st.session_state.selected_nums)
     bets = math.comb(selected_count, play_n) if selected_count >= play_n else 0
     cost = bets * 2
