@@ -17,7 +17,7 @@ st.markdown("""
     header {visibility: hidden;}
     div[data-testid="column"] { padding: 0 1px !important; }
     div[data-testid="stVerticalBlock"] { gap: 0.1rem !important; }
-    div[data-testid="stButton"] button p { white-space: nowrap !important; margin: 0 !important; font-size: 11px !important; }
+    div[data-testid="stButton"] button p, div[data-testid="stDownloadButton"] button p { white-space: nowrap !important; margin: 0 !important; font-size: 11px !important; }
     
     /* 核心矩阵小圆球 */
     div[data-testid="stButton"] button {
@@ -26,7 +26,7 @@ st.markdown("""
         transition: all 0.1s; box-shadow: 0 1px 2px rgba(0,0,0,0.1);
     }
     
-    /* 保护策略面板的长文本功能按钮 */
+    /* 保护策略面板的长文本功能按钮与导出按钮 */
     div[data-testid="stButton"] button:has(p:contains("图")),
     div[data-testid="stButton"] button:has(p:contains("退")),
     div[data-testid="stButton"] button:has(p:contains("大于")),
@@ -41,8 +41,10 @@ st.markdown("""
     div[data-testid="stButton"] button:has(p:contains("定义")),
     div[data-testid="stButton"] button:has(p:contains("战法")),
     div[data-testid="stButton"] button:has(p:contains("向上")),
-    div[data-testid="stButton"] button:has(p:contains("🔥")) {
-        width: 100% !important; border-radius: 4px !important; height: 26px !important;
+    div[data-testid="stButton"] button:has(p:contains("生成")),
+    div[data-testid="stButton"] button:has(p:contains("🔥")),
+    div[data-testid="stDownloadButton"] button {
+        width: 100% !important; border-radius: 4px !important; height: 26px !important; min-height: 26px !important;
     }
     
     div[data-testid="stButton"] button:has(p:contains("📈")) {
@@ -52,14 +54,21 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. 密钥与数据引擎
+# 1. 密钥、数据引擎与 DeepSeek 接口
 # ==========================================
 try:
     APP_ID = st.secrets["mxnzp_api"]["app_id"]
     APP_SECRET = st.secrets["mxnzp_api"]["app_secret"]
 except Exception:
-    st.error("❌ 密钥未配置。请检查 Secrets。")
+    st.error("❌ mxnzp_api 密钥未配置。请检查 Secrets。")
     st.stop()
+
+# 尝试获取 DeepSeek 密钥 (不阻断运行)
+DS_API_KEY = ""
+try:
+    DS_API_KEY = st.secrets["deepseek"]["api_key"]
+except Exception:
+    pass # 留空，后续在 UI 层提示
 
 @st.cache_data(ttl=1800)
 def fetch_data(issue_count=100):
@@ -76,6 +85,25 @@ def fetch_data(issue_count=100):
     except Exception as e:
         return pd.DataFrame(), str(e)
 
+# DeepSeek AI 诊断函数
+def ask_deepseek(prompt_text):
+    if not DS_API_KEY: return "❌ 未检测到 DeepSeek API Key，请在 secrets.toml 中配置 [deepseek] api_key。"
+    url = "https://api.deepseek.com/chat/completions"
+    headers = {"Authorization": f"Bearer {DS_API_KEY}", "Content-Type": "application/json"}
+    payload = {
+        "model": "deepseek-chat",
+        "messages": [
+            {"role": "system", "content": "你是一个顶级金融量化分析师兼彩票专家。你的任务是根据提供的净值K线、均线(MA)、MACD量能等参数，输出极简、专业、犀利的盘面诊断和操作建议。语气要冷峻客观。"},
+            {"role": "user", "content": prompt_text}
+        ]
+    }
+    try:
+        res = requests.post(url, headers=headers, json=payload, timeout=20)
+        res.raise_for_status()
+        return res.json()['choices'][0]['message']['content']
+    except Exception as e:
+        return f"AI 诊断请求失败: {str(e)}"
+
 with st.spinner("正在连接数据中心..."):
     df_raw, status = fetch_data(50)
 
@@ -84,13 +112,13 @@ if df_raw.empty:
     st.stop()
 
 # ==========================================
-# 2. 全局状态与机选逻辑
+# 2. 状态管理与核心算法
 # ==========================================
 if 'selected_nums' not in st.session_state: st.session_state.selected_nums = set([2, 8, 12]) 
 if 'hit_condition' not in st.session_state: st.session_state.hit_condition = 2
 if 'rand_count' not in st.session_state: st.session_state.rand_count = 10
 if 'ind_rule' not in st.session_state: st.session_state.ind_rule = "3码>=2"
-if 'scan_results' not in st.session_state: st.session_state.scan_results = [] # 存储扫描出的 10 组数据
+if 'scan_results' not in st.session_state: st.session_state.scan_results = []
 
 def apply_filter(f_type):
     st.session_state.selected_nums.clear()
@@ -106,66 +134,39 @@ def apply_filter(f_type):
         primes = [2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79]
         st.session_state.selected_nums.update(n for n in nums if n not in primes and n != 1)
 
-# 核心计算引擎
 def generate_strategy_kline(df, selected_nums, min_hits):
-    records = []
-    curr_val = 1000.0 
+    records = []; curr_val = 1000.0 
     for idx, row in df.iterrows():
-        nums = row['中奖号码']
-        hits = sum(1 for n in selected_nums if n in nums)
+        hits = sum(1 for n in selected_nums if n in row['中奖号码'])
         is_hit = hits >= min_hits
-        
         open_val = curr_val
         if is_hit:
-            close_val = open_val + 15
-            high_val = close_val + 2
-            low_val = open_val - 1
+            close_val = open_val + 15; high_val = close_val + 2; low_val = open_val - 1
         else:
-            close_val = open_val - 4
-            high_val = open_val + 1
-            low_val = close_val - 2
-            
+            close_val = open_val - 4; high_val = open_val + 1; low_val = close_val - 2
         curr_val = close_val
         records.append({"期号": row['期号'], "Open": open_val, "High": high_val, "Low": low_val, "Close": close_val})
         
     df_k = pd.DataFrame(records)
-    
-    # 增加三条均线，完美还原截图
     df_k['MA5'] = df_k['Close'].rolling(window=5, min_periods=1).mean()
     df_k['MA10'] = df_k['Close'].rolling(window=10, min_periods=1).mean()
     df_k['MA20'] = df_k['Close'].rolling(window=20, min_periods=1).mean()
-    
-    ema_fast = df_k['Close'].ewm(span=12, adjust=False).mean()
-    ema_slow = df_k['Close'].ewm(span=26, adjust=False).mean()
-    df_k['MACD'] = ema_fast - ema_slow
+    df_k['MACD'] = df_k['Close'].ewm(span=12, adjust=False).mean() - df_k['Close'].ewm(span=26, adjust=False).mean()
     df_k['DEA'] = df_k['MACD'].ewm(span=9, adjust=False).mean()
     df_k['MACD_HIST'] = df_k['MACD'] - df_k['DEA']
     return df_k
 
-# 🚀 强悍的实时扫描引擎
 def scan_top_trends(df, rule_str, top_n=10):
     try:
-        n_nums = int(rule_str.split("码")[0])
-        h_cond = int(rule_str[-1])
+        n_nums = int(rule_str.split("码")[0]); h_cond = int(rule_str[-1])
     except:
         n_nums = 3; h_cond = 2
-        
     results = []
-    # 随机生成 200 组作为样本空间进行扫描
     for _ in range(200):
         combo = sorted(random.sample(range(1, 81), n_nums))
         df_k = generate_strategy_kline(df, combo, h_cond)
-        
-        # 趋势评分算法 = 均线多头排列差距 + MACD动能柱最新值
-        latest_close = df_k['Close'].iloc[-1]
-        latest_ma20 = df_k['MA20'].iloc[-1]
-        latest_macd = df_k['MACD_HIST'].iloc[-1]
-        
-        # 得分越高，说明趋势向上越猛
-        trend_score = (latest_close - latest_ma20) + (latest_macd * 2) 
-        results.append((trend_score, combo, h_cond))
-        
-    # 按得分从高到低排序，提取前 10 名！
+        score = (df_k['Close'].iloc[-1] - df_k['MA20'].iloc[-1]) + (df_k['MACD_HIST'].iloc[-1] * 2) 
+        results.append((score, combo, h_cond))
     results.sort(key=lambda x: x[0], reverse=True)
     return results[:top_n]
 
@@ -174,51 +175,51 @@ def scan_top_trends(df, rule_str, top_n=10):
 # ==========================================
 left_col, right_col = st.columns([7.2, 2.8], gap="large")
 
-# ------------------------------------------
-# 左侧区域：真实的条件 K 线图表
-# ------------------------------------------
 with left_col:
     num_str = " ".join([f"{n:02d}" for n in sorted(list(st.session_state.selected_nums))])
     st.markdown(f"<h4 style='color:#FFF; margin-bottom:0;'>追踪阵型: <span style='color:#FF4B4B;'>[{num_str}]</span> | 爆发条件: 命中 ≥ <span style='color:#FF4B4B;'>{st.session_state.hit_condition}</span></h4>", unsafe_allow_html=True)
     
     if len(st.session_state.selected_nums) == 0:
-        st.info("👈 请在右侧面板点选号码或使用推荐策略，生成历史回测 K 线图。")
+        st.info("👈 请在右侧面板点选号码。")
     else:
         df_kline = generate_strategy_kline(df_raw, st.session_state.selected_nums, st.session_state.hit_condition)
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
         
-        # 绘制 K 线
         fig.add_trace(go.Candlestick(
             x=df_kline['期号'], open=df_kline['Open'], high=df_kline['High'], low=df_kline['Low'], close=df_kline['Close'],
             increasing_line_color='#FF4B4B', decreasing_line_color='#00D166', name='资金曲线'
         ), row=1, col=1)
-        
-        # 绘制三条均线 (完美还原截图里的黄、蓝、绿)
         fig.add_trace(go.Scatter(x=df_kline['期号'], y=df_kline['MA5'], mode='lines', name='MA5', line=dict(color='#F2B134', width=1)), row=1, col=1)
         fig.add_trace(go.Scatter(x=df_kline['期号'], y=df_kline['MA10'], mode='lines', name='MA10', line=dict(color='#00B4D8', width=1)), row=1, col=1)
         fig.add_trace(go.Scatter(x=df_kline['期号'], y=df_kline['MA20'], mode='lines', name='MA20', line=dict(color='#00D166', width=1)), row=1, col=1)
 
-        # 绘制 MACD
         macd_colors = ['#FF4B4B' if val > 0 else '#00D166' for val in df_kline['MACD_HIST']]
         fig.add_trace(go.Bar(x=df_kline['期号'], y=df_kline['MACD_HIST'], marker_color=macd_colors, name='MACD量能'), row=2, col=1)
         fig.add_trace(go.Scatter(x=df_kline['期号'], y=df_kline['MACD'], mode='lines', name='DIF', line=dict(color='#FFF', width=1)), row=2, col=1)
 
-        fig.update_layout(height=660, template="plotly_dark", hovermode="x unified", margin=dict(l=0, r=0, t=10, b=0), xaxis_rangeslider_visible=False)
+        fig.update_layout(height=580, template="plotly_dark", hovermode="x unified", margin=dict(l=0, r=0, t=10, b=0), xaxis_rangeslider_visible=False)
         fig.update_yaxes(gridcolor='#333333')
         st.plotly_chart(fig, use_container_width=True)
 
-# ------------------------------------------
-# 右侧区域：极致复刻的中控台
-# ------------------------------------------
+        # 🤖 【核心升级】DeepSeek AI 诊断面板
+        with st.expander("🤖 DeepSeek 智算中心 - 盘面深度诊断", expanded=False):
+            if st.button("生成 AI 研报", type="primary"):
+                latest = df_kline.iloc[-1]
+                p_close = round(latest['Close'], 2); p_ma5 = round(latest['MA5'], 2); p_ma20 = round(latest['MA20'], 2); p_macd = round(latest['MACD_HIST'], 2)
+                ai_prompt = f"分析标的号码：{num_str}。触发条件：≥{st.session_state.hit_condition}。当前参数：收盘价净值 {p_close}，MA5均线 {p_ma5}，MA20均线(牛熊线) {p_ma20}，MACD动能柱 {p_macd}。判断目前处于热态爆发、震荡还是冷态阴跌？给出明确的操作建议。"
+                
+                with st.spinner("DeepSeek AI 正在推演底层逻辑..."):
+                    ai_report = ask_deepseek(ai_prompt)
+                st.markdown(f"<div style='background-color:#1E1E1E; padding:15px; border-radius:8px; border-left:4px solid #FF4B4B; color:#E0E0E0;'>{ai_report}</div>", unsafe_allow_html=True)
+
+
 with right_col:
     top_c1, top_c2, top_c3 = st.columns([3, 4, 2])
     top_c1.selectbox("彩种", ["快乐8", "双色球"], label_visibility="collapsed")
-    latest_issue = df_raw.iloc[-1]['期号']
-    top_c2.markdown(f"<div style='line-height: 2; color:#888; font-size:12px; text-align:center;'>第{latest_issue}期 ↻</div>", unsafe_allow_html=True)
+    top_c2.markdown(f"<div style='line-height: 2; color:#888; font-size:12px; text-align:center;'>第{df_raw.iloc[-1]['期号']}期 ↻</div>", unsafe_allow_html=True)
     top_c3.button("退出", use_container_width=True)
 
-    latest_nums = df_raw.iloc[-1]['中奖号码']
-    html_balls = "".join([f"<div style='display:inline-block; width:22px; height:22px; line-height:22px; text-align:center; background-color:#FF4B4B; color:white; border-radius:50%; margin:1px 1px; font-size:10px; font-weight:bold;'>{n:02d}</div>" for n in latest_nums])
+    html_balls = "".join([f"<div style='display:inline-block; width:22px; height:22px; line-height:22px; text-align:center; background-color:#FF4B4B; color:white; border-radius:50%; margin:1px 1px; font-size:10px; font-weight:bold;'>{n:02d}</div>" for n in df_raw.iloc[-1]['中奖号码']])
     st.markdown(f"<div style='margin: 5px 0 10px 0;'>{html_balls} 〉</div>", unsafe_allow_html=True)
     
     tabs = st.tabs(["号码", "走势图", "指标", "分区", "头尾"])
@@ -257,13 +258,14 @@ with right_col:
             st.session_state.selected_nums = set(random.sample(range(1, 81), st.session_state.rand_count))
             st.rerun()
         if f_cols[8].button(str(st.session_state.rand_count), key="bf_rcnt"):
-            cycle_dict = {1: 3, 3: 5, 5: 10, 10: 20, 20: 1}
-            st.session_state.rand_count = cycle_dict.get(st.session_state.rand_count, 10)
+            st.session_state.rand_count = {1:3, 3:5, 5:10, 10:20, 20:1}.get(st.session_state.rand_count, 10)
             st.rerun()
             
-        f_cols[9].button("导入", key="bf_in")
+        # ⬇️ 【核心升级】导出功能按钮
+        export_text = " ".join([f"{n:02d}" for n in sorted(list(st.session_state.selected_nums))])
+        with f_cols[9]:
+            st.download_button(label="导出", data=export_text, file_name="快乐8精选阵型.txt", mime="text/plain", key="bf_out")
 
-    # 【面板 3：量化指标与策略推荐】
     with tabs[2]:
         ic1, ic2, ic3 = st.columns(3)
         ic1.button("推荐", type="primary", use_container_width=True)
@@ -282,24 +284,19 @@ with right_col:
             b_type = "primary" if st.session_state.ind_rule == rule else "secondary"
             if rule_cols[i%4].button(rule, type=b_type, key=f"ir_{rule}"):
                 st.session_state.ind_rule = rule
-                # 点击规则时，触发底层扫描！
-                with st.spinner(f"正在扫描 200 组底层数据，挖掘趋势最强 10 组..."):
+                with st.spinner(f"正在扫描 200 组底层数据..."):
                     st.session_state.scan_results = scan_top_trends(df_raw, rule, top_n=10)
                 st.rerun()
                 
-        # 初始化扫描结果（如果还没点过的话）
         if not st.session_state.scan_results:
             st.session_state.scan_results = scan_top_trends(df_raw, st.session_state.ind_rule, top_n=10)
 
-        # 🚀 渲染出提取的 10 组最优条件
         curr_rule = st.session_state.ind_rule
         st.markdown(f"<hr style='margin:10px 0; border-color:#333;'><div style='font-size:12px; color:#00D166; margin-bottom:5px;'>✓ 已为您提取出 <b>[{curr_rule}]</b> 趋势最强的 Top 10 组：</div>", unsafe_allow_html=True)
         
-        # 将 10 组结果分两列显示，更加紧凑美观
         res_cols = st.columns(2)
         for idx, (score, combo, h_cond) in enumerate(st.session_state.scan_results):
             set_str = " ".join([f"{n:02d}" for n in combo])
-            # 得分最高的加上小火苗图标
             icon = "🔥" if idx < 3 else "🚀"
             if res_cols[idx % 2].button(f"{icon} {set_str}", key=f"res_{idx}"):
                 st.session_state.selected_nums = set(combo)
