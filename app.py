@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import requests
-import math
 import random
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -54,21 +53,20 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. 密钥、数据引擎与 DeepSeek 接口
+# 1. 防弹级密钥读取与数据引擎
 # ==========================================
 try:
-    APP_ID = st.secrets["mxnzp_api"]["app_id"]
-    APP_SECRET = st.secrets["mxnzp_api"]["app_secret"]
-except Exception:
-    st.error("❌ mxnzp_api 密钥未配置。请检查 Secrets。")
+    mxnzp = st.secrets.get("mxnzp_api", {})
+    APP_ID = mxnzp.get("app_id", "")
+    APP_SECRET = mxnzp.get("app_secret", "")
+    if not APP_ID or not APP_SECRET:
+        st.error("❌ 基础数据密钥未配置。请在 Secrets 中配置 [mxnzp_api]。")
+        st.stop()
+        
+    DS_API_KEY = st.secrets.get("deepseek", {}).get("api_key", "")
+except Exception as e:
+    st.error(f"❌ 配置文件解析致命错误，请检查格式: {e}")
     st.stop()
-
-# 尝试获取 DeepSeek 密钥 (不阻断运行)
-DS_API_KEY = ""
-try:
-    DS_API_KEY = st.secrets["deepseek"]["api_key"]
-except Exception:
-    pass # 留空，后续在 UI 层提示
 
 @st.cache_data(ttl=1800)
 def fetch_data(issue_count=100):
@@ -87,7 +85,7 @@ def fetch_data(issue_count=100):
 
 # DeepSeek AI 诊断函数
 def ask_deepseek(prompt_text):
-    if not DS_API_KEY: return "❌ 未检测到 DeepSeek API Key，请在 secrets.toml 中配置 [deepseek] api_key。"
+    if not DS_API_KEY: return "❌ 未检测到 DeepSeek API Key，请在 secrets 中配置。"
     url = "https://api.deepseek.com/chat/completions"
     headers = {"Authorization": f"Bearer {DS_API_KEY}", "Content-Type": "application/json"}
     payload = {
@@ -108,7 +106,7 @@ with st.spinner("正在连接数据中心..."):
     df_raw, status = fetch_data(50)
 
 if df_raw.empty:
-    st.error("数据拉取失败。")
+    st.error(f"数据拉取失败: {status}")
     st.stop()
 
 # ==========================================
@@ -201,7 +199,7 @@ with left_col:
         fig.update_yaxes(gridcolor='#333333')
         st.plotly_chart(fig, use_container_width=True)
 
-        # 🤖 【核心升级】DeepSeek AI 诊断面板
+        # 🤖 DeepSeek AI 诊断面板
         with st.expander("🤖 DeepSeek 智算中心 - 盘面深度诊断", expanded=False):
             if st.button("生成 AI 研报", type="primary"):
                 latest = df_kline.iloc[-1]
@@ -211,7 +209,6 @@ with left_col:
                 with st.spinner("DeepSeek AI 正在推演底层逻辑..."):
                     ai_report = ask_deepseek(ai_prompt)
                 st.markdown(f"<div style='background-color:#1E1E1E; padding:15px; border-radius:8px; border-left:4px solid #FF4B4B; color:#E0E0E0;'>{ai_report}</div>", unsafe_allow_html=True)
-
 
 with right_col:
     top_c1, top_c2, top_c3 = st.columns([3, 4, 2])
@@ -261,7 +258,6 @@ with right_col:
             st.session_state.rand_count = {1:3, 3:5, 5:10, 10:20, 20:1}.get(st.session_state.rand_count, 10)
             st.rerun()
             
-        # ⬇️ 【核心升级】导出功能按钮
         export_text = " ".join([f"{n:02d}" for n in sorted(list(st.session_state.selected_nums))])
         with f_cols[9]:
             st.download_button(label="导出", data=export_text, file_name="快乐8精选阵型.txt", mime="text/plain", key="bf_out")
@@ -303,7 +299,6 @@ with right_col:
                 st.session_state.hit_condition = h_cond
                 st.rerun()
 
-    # 底部公共组件
     st.markdown("<hr style='margin: 8px 0; border-color: #333;'>", unsafe_allow_html=True)
     cond_c1, cond_c2, cond_c3 = st.columns([3, 4, 3])
     cond_c2.selectbox("逻辑", ["大于等于 ▼", "等于 ▼", "小于等于 ▼"], label_visibility="collapsed")
