@@ -17,7 +17,6 @@ st.markdown("""
     header {visibility: hidden;}
     div[data-testid="column"] { padding: 0 1px !important; }
     div[data-testid="stVerticalBlock"] { gap: 0.1rem !important; }
-    
     div[data-testid="stButton"] button p { white-space: nowrap !important; margin: 0 !important; font-size: 11px !important; }
     
     /* 核心矩阵小圆球 */
@@ -27,7 +26,7 @@ st.markdown("""
         transition: all 0.1s; box-shadow: 0 1px 2px rgba(0,0,0,0.1);
     }
     
-    /* 保护策略面板的长文本功能按钮（宽条状，不要变圆） */
+    /* 保护策略面板的长文本功能按钮 */
     div[data-testid="stButton"] button:has(p:contains("图")),
     div[data-testid="stButton"] button:has(p:contains("退")),
     div[data-testid="stButton"] button:has(p:contains("大于")),
@@ -42,7 +41,7 @@ st.markdown("""
     div[data-testid="stButton"] button:has(p:contains("定义")),
     div[data-testid="stButton"] button:has(p:contains("战法")),
     div[data-testid="stButton"] button:has(p:contains("向上")),
-    div[data-testid="stButton"] button:has(p:contains("🚀")) {
+    div[data-testid="stButton"] button:has(p:contains("🔥")) {
         width: 100% !important; border-radius: 4px !important; height: 26px !important;
     }
     
@@ -87,10 +86,11 @@ if df_raw.empty:
 # ==========================================
 # 2. 全局状态与机选逻辑
 # ==========================================
-if 'selected_nums' not in st.session_state: st.session_state.selected_nums = set([2, 8, 12]) # 默认随便给几个
+if 'selected_nums' not in st.session_state: st.session_state.selected_nums = set([2, 8, 12]) 
 if 'hit_condition' not in st.session_state: st.session_state.hit_condition = 2
 if 'rand_count' not in st.session_state: st.session_state.rand_count = 10
-if 'ind_rule' not in st.session_state: st.session_state.ind_rule = "3码>=2" # 指标面板的默认规则
+if 'ind_rule' not in st.session_state: st.session_state.ind_rule = "3码>=2"
+if 'scan_results' not in st.session_state: st.session_state.scan_results = [] # 存储扫描出的 10 组数据
 
 def apply_filter(f_type):
     st.session_state.selected_nums.clear()
@@ -106,6 +106,7 @@ def apply_filter(f_type):
         primes = [2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53,59,61,67,71,73,79]
         st.session_state.selected_nums.update(n for n in nums if n not in primes and n != 1)
 
+# 核心计算引擎
 def generate_strategy_kline(df, selected_nums, min_hits):
     records = []
     curr_val = 1000.0 
@@ -128,7 +129,11 @@ def generate_strategy_kline(df, selected_nums, min_hits):
         records.append({"期号": row['期号'], "Open": open_val, "High": high_val, "Low": low_val, "Close": close_val})
         
     df_k = pd.DataFrame(records)
+    
+    # 增加三条均线，完美还原截图
     df_k['MA5'] = df_k['Close'].rolling(window=5, min_periods=1).mean()
+    df_k['MA10'] = df_k['Close'].rolling(window=10, min_periods=1).mean()
+    df_k['MA20'] = df_k['Close'].rolling(window=20, min_periods=1).mean()
     
     ema_fast = df_k['Close'].ewm(span=12, adjust=False).mean()
     ema_slow = df_k['Close'].ewm(span=26, adjust=False).mean()
@@ -136,6 +141,33 @@ def generate_strategy_kline(df, selected_nums, min_hits):
     df_k['DEA'] = df_k['MACD'].ewm(span=9, adjust=False).mean()
     df_k['MACD_HIST'] = df_k['MACD'] - df_k['DEA']
     return df_k
+
+# 🚀 强悍的实时扫描引擎
+def scan_top_trends(df, rule_str, top_n=10):
+    try:
+        n_nums = int(rule_str.split("码")[0])
+        h_cond = int(rule_str[-1])
+    except:
+        n_nums = 3; h_cond = 2
+        
+    results = []
+    # 随机生成 200 组作为样本空间进行扫描
+    for _ in range(200):
+        combo = sorted(random.sample(range(1, 81), n_nums))
+        df_k = generate_strategy_kline(df, combo, h_cond)
+        
+        # 趋势评分算法 = 均线多头排列差距 + MACD动能柱最新值
+        latest_close = df_k['Close'].iloc[-1]
+        latest_ma20 = df_k['MA20'].iloc[-1]
+        latest_macd = df_k['MACD_HIST'].iloc[-1]
+        
+        # 得分越高，说明趋势向上越猛
+        trend_score = (latest_close - latest_ma20) + (latest_macd * 2) 
+        results.append((trend_score, combo, h_cond))
+        
+    # 按得分从高到低排序，提取前 10 名！
+    results.sort(key=lambda x: x[0], reverse=True)
+    return results[:top_n]
 
 # ==========================================
 # 3. 核心布局：左右分栏
@@ -146,7 +178,6 @@ left_col, right_col = st.columns([7.2, 2.8], gap="large")
 # 左侧区域：真实的条件 K 线图表
 # ------------------------------------------
 with left_col:
-    # 顶部标题动态显示当前监视的组合
     num_str = " ".join([f"{n:02d}" for n in sorted(list(st.session_state.selected_nums))])
     st.markdown(f"<h4 style='color:#FFF; margin-bottom:0;'>追踪阵型: <span style='color:#FF4B4B;'>[{num_str}]</span> | 爆发条件: 命中 ≥ <span style='color:#FF4B4B;'>{st.session_state.hit_condition}</span></h4>", unsafe_allow_html=True)
     
@@ -156,12 +187,18 @@ with left_col:
         df_kline = generate_strategy_kline(df_raw, st.session_state.selected_nums, st.session_state.hit_condition)
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
         
+        # 绘制 K 线
         fig.add_trace(go.Candlestick(
             x=df_kline['期号'], open=df_kline['Open'], high=df_kline['High'], low=df_kline['Low'], close=df_kline['Close'],
             increasing_line_color='#FF4B4B', decreasing_line_color='#00D166', name='资金曲线'
         ), row=1, col=1)
+        
+        # 绘制三条均线 (完美还原截图里的黄、蓝、绿)
         fig.add_trace(go.Scatter(x=df_kline['期号'], y=df_kline['MA5'], mode='lines', name='MA5', line=dict(color='#F2B134', width=1)), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df_kline['期号'], y=df_kline['MA10'], mode='lines', name='MA10', line=dict(color='#00B4D8', width=1)), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df_kline['期号'], y=df_kline['MA20'], mode='lines', name='MA20', line=dict(color='#00D166', width=1)), row=1, col=1)
 
+        # 绘制 MACD
         macd_colors = ['#FF4B4B' if val > 0 else '#00D166' for val in df_kline['MACD_HIST']]
         fig.add_trace(go.Bar(x=df_kline['期号'], y=df_kline['MACD_HIST'], marker_color=macd_colors, name='MACD量能'), row=2, col=1)
         fig.add_trace(go.Scatter(x=df_kline['期号'], y=df_kline['MACD'], mode='lines', name='DIF', line=dict(color='#FFF', width=1)), row=2, col=1)
@@ -184,10 +221,8 @@ with right_col:
     html_balls = "".join([f"<div style='display:inline-block; width:22px; height:22px; line-height:22px; text-align:center; background-color:#FF4B4B; color:white; border-radius:50%; margin:1px 1px; font-size:10px; font-weight:bold;'>{n:02d}</div>" for n in latest_nums])
     st.markdown(f"<div style='margin: 5px 0 10px 0;'>{html_balls} 〉</div>", unsafe_allow_html=True)
     
-    # === 核心多面板导航 ===
     tabs = st.tabs(["号码", "走势图", "指标", "分区", "头尾"])
     
-    # 【面板 1：号码选择】(保持原有的矩阵面板)
     with tabs[0]:
         sub_c1, sub_c2, sub_c3, sub_c4, sub_c5, sub_c6, sub_c7 = st.columns(7)
         sub_c1.button("默认", type="primary")
@@ -228,7 +263,7 @@ with right_col:
             
         f_cols[9].button("导入", key="bf_in")
 
-    # 【面板 3：量化指标与策略推荐】(完美复刻图二)
+    # 【面板 3：量化指标与策略推荐】
     with tabs[2]:
         ic1, ic2, ic3 = st.columns(3)
         ic1.button("推荐", type="primary", use_container_width=True)
@@ -240,7 +275,6 @@ with right_col:
         ic4.button("共振战法", use_container_width=True)
         ic5.button("趋势向上", type="primary", use_container_width=True)
         
-        # 策略网格
         st.markdown("<div style='height: 5px;'></div>", unsafe_allow_html=True)
         rules = ["2码=0", "2码>=1", "3码=0", "3码>=1", "3码>=2", "4码>=2", "5码>=2", "6码>=2", "6码>=3", "7码>=3", "8码>=3", "10码>=4"]
         rule_cols = st.columns(4)
@@ -248,32 +282,31 @@ with right_col:
             b_type = "primary" if st.session_state.ind_rule == rule else "secondary"
             if rule_cols[i%4].button(rule, type=b_type, key=f"ir_{rule}"):
                 st.session_state.ind_rule = rule
+                # 点击规则时，触发底层扫描！
+                with st.spinner(f"正在扫描 200 组底层数据，挖掘趋势最强 10 组..."):
+                    st.session_state.scan_results = scan_top_trends(df_raw, rule, top_n=10)
                 st.rerun()
                 
-        # 模拟 AI 扫描结果展示
+        # 初始化扫描结果（如果还没点过的话）
+        if not st.session_state.scan_results:
+            st.session_state.scan_results = scan_top_trends(df_raw, st.session_state.ind_rule, top_n=10)
+
+        # 🚀 渲染出提取的 10 组最优条件
         curr_rule = st.session_state.ind_rule
-        st.markdown(f"<hr style='margin:10px 0; border-color:#333;'><div style='font-size:12px; color:#00D166; margin-bottom:10px;'>✓ 已扫描底层 82,160 组数据<br>为您挖掘出以下符合 <b>[{curr_rule}]</b> 的爆发趋势组合：</div>", unsafe_allow_html=True)
+        st.markdown(f"<hr style='margin:10px 0; border-color:#333;'><div style='font-size:12px; color:#00D166; margin-bottom:5px;'>✓ 已为您提取出 <b>[{curr_rule}]</b> 趋势最强的 Top 10 组：</div>", unsafe_allow_html=True)
         
-        # 简单的规则解析器 (例如 "3码>=2" -> 选3个号，条件为2)
-        try:
-            n_nums = int(curr_rule.split("码")[0])
-            h_cond = int(curr_rule[-1])
-        except:
-            n_nums = 3; h_cond = 2
-            
-        # 根据规则动态生成 4 个推荐的组合按钮
-        random.seed(hash(curr_rule)) # 保证每次点同一个规则，推荐的号码是固定的
-        for _ in range(4):
-            mock_set = sorted(random.sample(range(1, 81), n_nums))
-            set_str = " ".join([f"{n:02d}" for n in mock_set])
-            if st.button(f"🚀 {set_str} (MACD 底背离)", key=f"mock_{set_str}"):
-                # 核心联动：点击推荐，立刻改变全局号码和条件，并渲染左侧大图！
-                st.session_state.selected_nums = set(mock_set)
+        # 将 10 组结果分两列显示，更加紧凑美观
+        res_cols = st.columns(2)
+        for idx, (score, combo, h_cond) in enumerate(st.session_state.scan_results):
+            set_str = " ".join([f"{n:02d}" for n in combo])
+            # 得分最高的加上小火苗图标
+            icon = "🔥" if idx < 3 else "🚀"
+            if res_cols[idx % 2].button(f"{icon} {set_str}", key=f"res_{idx}"):
+                st.session_state.selected_nums = set(combo)
                 st.session_state.hit_condition = h_cond
-                st.toast(f"已锁定策略：[{set_str}]，请查看左侧 K 线走势！", icon="📈")
                 st.rerun()
 
-    # 底部公共组件 (条件选择器)
+    # 底部公共组件
     st.markdown("<hr style='margin: 8px 0; border-color: #333;'>", unsafe_allow_html=True)
     cond_c1, cond_c2, cond_c3 = st.columns([3, 4, 3])
     cond_c2.selectbox("逻辑", ["大于等于 ▼", "等于 ▼", "小于等于 ▼"], label_visibility="collapsed")
@@ -285,7 +318,6 @@ with right_col:
             st.session_state.hit_condition = i
             st.rerun() 
 
-    # 底部三大出图按钮
     st.markdown("<div style='height: 5px;'></div>", unsafe_allow_html=True)
     b1, b2, b3 = st.columns([1, 1, 1.1]) 
     b1.button("单码出图", use_container_width=True)
