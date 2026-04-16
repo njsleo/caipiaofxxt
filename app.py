@@ -89,7 +89,7 @@ def ask_deepseek(prompt_text):
     payload = {
         "model": "deepseek-chat",
         "messages": [
-            {"role": "system", "content": "你是一个顶级金融量化分析师兼彩票数据专家。请使用冷峻、专业的华尔街量化投研报告风格回答。排版要清晰美观，使用 Markdown 加粗核心数字。"},
+            {"role": "system", "content": "你是一个顶级金融量化分析师兼彩票数据专家。请使用冷峻、专业的华尔街量化投研报告风格回答。排版要清晰美观，使用 Markdown 格式。绝对禁止使用任何 Emoji 表情符号（如皇冠、星星、火焰等）。"},
             {"role": "user", "content": prompt_text}
         ]
     }
@@ -204,14 +204,14 @@ with left_col:
         fig.update_yaxes(gridcolor='#333333')
         st.plotly_chart(fig, use_container_width=True)
 
-        # 🤖 【核心升级】DeepSeek 智能组号中心
+        # 🤖 DeepSeek 智能组号中心
         with st.expander("🤖 DeepSeek 智算中心 - 盘面诊断 & 全维智能组号", expanded=True):
             ai_c1, ai_c2 = st.columns(2)
             
             if ai_c1.button("📉 诊断当前阵型", use_container_width=True):
                 latest = df_kline.iloc[-1]
                 p_close = round(latest['Close'], 2); p_ma5 = round(latest['MA5'], 2); p_ma20 = round(latest['MA20'], 2); p_macd = round(latest['MACD_HIST'], 2)
-                prompt = f"分析标的：[{num_str}]。条件：≥{st.session_state.hit_condition}。当前收盘净值 {p_close}，MA20(牛熊线) {p_ma20}，MACD动能柱 {p_macd}。请给出极简的趋势判定（上涨/震荡/下跌）和操作建议。"
+                prompt = f"分析标的：[{num_str}]。条件：≥{st.session_state.hit_condition}。当前收盘净值 {p_close}，MA20(牛熊线) {p_ma20}，MACD动能柱 {p_macd}。请给出极简的趋势判定和操作建议。"
                 with st.spinner("AI 正在解析当前均线与动能..."):
                     st.session_state.ai_report_cache = ask_deepseek(prompt)
             
@@ -219,14 +219,13 @@ with left_col:
                 with st.spinner("后台算力正在扫描全盘 80 个号码的量能模型..."):
                     hot_20 = get_hot_numbers_for_ai(df_raw)
                     hot_str = ", ".join([f"{n:02d}" for n in hot_20])
-                    # 提示词终极进化：覆盖选10到选2，加上最优选
-                    prompt = f"系统已通过底层算法，算出当前MACD底背离且均线呈多头排列的 Top 20 强势核心号码池为：[{hot_str}]。请作为高级量化策略师执行以下指令：\n1. 用一句话分析目前这批热号的动能特征。\n2. 利用这20个强势号码，运用排列组合策略，依次为我精选推荐【选10】、【选9】、【选8】、【选7】、【选6】、【选5】、【选4】、【选3】、【选2】的号码（每种玩法推荐 1 注即可）。\n3. 在最后，单独高亮指出你认为胜率最高、最值得投资的一组【👑终极最优选组合】。\n输出格式务必清晰排版，号码加粗。"
+                    # 💡 【修改点：要求每种玩法给 3 注，并禁止出现皇冠星星等 Emoji】
+                    prompt = f"系统已算出当前MACD底背离且均线呈多头排列的 Top 20 强势核心号码池为：[{hot_str}]。请作为高级量化策略师执行：\n1. 一句话分析这批热号的动能特征。\n2. 利用这20个强势号码，依次精选推荐【选10】、【选9】、【选8】、【选7】、【选6】、【选5】、【选4】、【选3】、【选2】的组合（注意：每种玩法必须提供 3 注号码）。\n3. 在最后，单独指出你认为胜率最高、最值得投资的一组【终极最优选组合】。\n注意：全篇报告保持严谨纯文本，禁止使用任何 Emoji 符号，请使用 Markdown 表格排版，号码加粗。"
                     st.session_state.ai_report_cache = ask_deepseek(prompt)
             
             if st.session_state.ai_report_cache:
                 st.markdown(f"<div style='background-color:#1E1E1E; padding:15px; border-radius:8px; border-left:4px solid #FF4B4B; color:#E0E0E0; font-size: 14px;'>{st.session_state.ai_report_cache}</div>", unsafe_allow_html=True)
                 st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-                # ⬇️ 【新增】AI 报告专属导出按钮
                 st.download_button(label="💾 下载 DeepSeek AI 研报与号码组合", data=st.session_state.ai_report_cache, file_name="DeepSeek_量化智能组号.txt", mime="text/plain", use_container_width=True)
 
 with right_col:
@@ -318,7 +317,6 @@ with right_col:
                 st.session_state.hit_condition = h_cond
                 st.rerun()
 
-        # ⬇️ 【新增】指标 Top 10 专属导出按钮
         st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
         scan_export_text = f"【共振战法：{curr_rule}】均线多头与MACD底背离 最强 Top 10 组合：\n\n"
         for idx, (score, combo, h_cond) in enumerate(st.session_state.scan_results):
