@@ -24,6 +24,7 @@ st.markdown("""
         transition: all 0.1s; box-shadow: 0 1px 2px rgba(0,0,0,0.1);
     }
     
+    /* 保护策略面板的长文本功能按钮与导出按钮 */
     div[data-testid="stButton"] button:has(p:contains("图")),
     div[data-testid="stButton"] button:has(p:contains("退")),
     div[data-testid="stButton"] button:has(p:contains("大于")),
@@ -40,6 +41,7 @@ st.markdown("""
     div[data-testid="stButton"] button:has(p:contains("向上")),
     div[data-testid="stButton"] button:has(p:contains("诊断当前")),
     div[data-testid="stButton"] button:has(p:contains("智能组号")),
+    div[data-testid="stButton"] button:has(p:contains("演化学习")),
     div[data-testid="stButton"] button:has(p:contains("🔥")),
     div[data-testid="stDownloadButton"] button {
         width: 100% !important; border-radius: 4px !important; height: 28px !important; min-height: 28px !important;
@@ -89,12 +91,12 @@ def ask_deepseek(prompt_text):
     payload = {
         "model": "deepseek-chat",
         "messages": [
-            {"role": "system", "content": "你是一个顶级金融量化分析师兼彩票数据专家。请使用冷峻、专业的华尔街量化投研报告风格回答。排版要清晰美观，使用 Markdown 格式。绝对禁止使用任何 Emoji 表情符号（如皇冠、星星、火焰等）。"},
+            {"role": "system", "content": "你是一个具备极强模式识别能力的顶级金融量化分析师兼大模型AI。请使用冷峻、专业的华尔街量化投研报告风格回答。绝对禁止使用任何 Emoji 表情符号。绝对禁止使用星号(*)对文字或号码进行加粗。请保持最纯净的文本排版，以便用户直接复制导出。"},
             {"role": "user", "content": prompt_text}
         ]
     }
     try:
-        res = requests.post(url, headers=headers, json=payload, timeout=50)
+        res = requests.post(url, headers=headers, json=payload, timeout=60)
         res.raise_for_status()
         return res.json()['choices'][0]['message']['content']
     except Exception as e:
@@ -176,6 +178,17 @@ def get_hot_numbers_for_ai(df):
     hot_list.sort(key=lambda x: x[1], reverse=True)
     return sorted([x[0] for x in hot_list[:20]])
 
+# 🤖 提取历史全量特征用于 AI 演化学习
+def extract_historical_context(df, limit=30):
+    context_str = ""
+    for idx, row in df.tail(limit).iterrows():
+        nums = row['中奖号码']
+        odd_count = sum(1 for n in nums if n % 2 != 0)
+        big_count = sum(1 for n in nums if n > 40)
+        total_sum = sum(nums)
+        context_str += f"[{row['期号']}] 和值:{total_sum} 奇偶比:{odd_count}/{20-odd_count} 大小比:{big_count}/{20-big_count} 号码序列:{nums}\n"
+    return context_str
+
 # ==========================================
 # 3. 核心布局：左右分栏
 # ==========================================
@@ -200,13 +213,13 @@ with left_col:
         fig.add_trace(go.Bar(x=df_kline['期号'], y=df_kline['MACD_HIST'], marker_color=macd_colors, name='MACD量能'), row=2, col=1)
         fig.add_trace(go.Scatter(x=df_kline['期号'], y=df_kline['MACD'], mode='lines', name='DIF', line=dict(color='#FFF', width=1)), row=2, col=1)
 
-        fig.update_layout(height=520, template="plotly_dark", hovermode="x unified", margin=dict(l=0, r=0, t=10, b=0), xaxis_rangeslider_visible=False)
+        fig.update_layout(height=480, template="plotly_dark", hovermode="x unified", margin=dict(l=0, r=0, t=10, b=0), xaxis_rangeslider_visible=False)
         fig.update_yaxes(gridcolor='#333333')
         st.plotly_chart(fig, use_container_width=True)
 
-        # 🤖 DeepSeek 智能组号中心
-        with st.expander("🤖 DeepSeek 智算中心 - 盘面诊断 & 全维智能组号", expanded=True):
-            ai_c1, ai_c2 = st.columns(2)
+        # 🤖 DeepSeek 智能组号与感知学习中心
+        with st.expander("🤖 DeepSeek 智算中心 - 感知演化与智能决策", expanded=True):
+            ai_c1, ai_c2, ai_c3 = st.columns([1, 1, 1.2]) # 分配三个按钮
             
             if ai_c1.button("📉 诊断当前阵型", use_container_width=True):
                 latest = df_kline.iloc[-1]
@@ -215,18 +228,32 @@ with left_col:
                 with st.spinner("AI 正在解析当前均线与动能..."):
                     st.session_state.ai_report_cache = ask_deepseek(prompt)
             
-            if ai_c2.button("🔮 全盘扫描 & 智能组号", type="primary", use_container_width=True):
-                with st.spinner("后台算力正在扫描全盘 80 个号码的量能模型..."):
+            if ai_c2.button("🔮 算力智能组号", use_container_width=True):
+                with st.spinner("后台算力正在扫描底层动能模型..."):
                     hot_20 = get_hot_numbers_for_ai(df_raw)
-                    hot_str = ", ".join([f"{n:02d}" for n in hot_20])
-                    # 💡 【修改点：要求每种玩法给 3 注，并禁止出现皇冠星星等 Emoji】
-                    prompt = f"系统已算出当前MACD底背离且均线呈多头排列的 Top 20 强势核心号码池为：[{hot_str}]。请作为高级量化策略师执行：\n1. 一句话分析这批热号的动能特征。\n2. 利用这20个强势号码，依次精选推荐【选10】、【选9】、【选8】、【选7】、【选6】、【选5】、【选4】、【选3】、【选2】的组合（注意：每种玩法必须提供 3 注号码）。\n3. 在最后，单独指出你认为胜率最高、最值得投资的一组【终极最优选组合】。\n注意：全篇报告保持严谨纯文本，禁止使用任何 Emoji 符号，请使用 Markdown 表格排版，号码加粗。"
+                    hot_str = " ".join([f"{n:02d}" for n in hot_20])
+                    prompt = f"系统算出的 Top 20 强势核心号码为：[{hot_str}]。\n请严格执行：\n1. 简要分析这批号码特征。\n2. 利用这20个号码，依次推荐【选10】到【选2】组合（每种玩法严格提供 3 注）。\n3. 选出一组【终极最优选组合】。\n警告：全篇必须是纯文本，绝对禁止加星号(*)！"
                     st.session_state.ai_report_cache = ask_deepseek(prompt)
             
+            # 💡 【新增功能】AI 自主感知演化学习
+            if ai_c3.button("🧠 启动 AI 深度演化学习", type="primary", use_container_width=True):
+                with st.spinner("系统正在将最近 30 期海量数据压入大模型进行 In-Context 感知学习..."):
+                    hist_data_str = extract_historical_context(df_raw, 30)
+                    prompt = f"""
+                    你现在进入【深度演化学习模式】。以下是目标彩种最近 30 期的完整底层开奖轨迹数据（包含和值、奇偶比、大小比及号码矩阵）：
+                    \n{hist_data_str}\n
+                    请你作为具备自我演化能力的 AI，完成以下三大任务：
+                    1. 【特征感知】：抛弃传统的频率统计，通过阅读上述长序列数据，感知其隐含的非线性趋势（例如：连号转移规律、冷热极限反转点、跨区漂移特征）。
+                    2. 【理论建立】：结合你的感知，强行总结出一套只属于针对下一期开奖的【AI 独家感知理论】（100字以内说明逻辑）。
+                    3. 【演化预测】：基于你刚刚建立的这套感知理论，直接推演并精准给出下一期极大概率会爆发的 10 个独立号码（作为一注超强潜力池）。
+                    警告：全篇必须是极其干净的纯文本！绝对禁止在号码或文字两边加星号(*)和表情符号！
+                    """
+                    st.session_state.ai_report_cache = ask_deepseek(prompt)
+
             if st.session_state.ai_report_cache:
-                st.markdown(f"<div style='background-color:#1E1E1E; padding:15px; border-radius:8px; border-left:4px solid #FF4B4B; color:#E0E0E0; font-size: 14px;'>{st.session_state.ai_report_cache}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='background-color:#1E1E1E; padding:15px; border-radius:8px; border-left:4px solid #FF4B4B; color:#E0E0E0; font-size: 14px; white-space: pre-wrap;'>{st.session_state.ai_report_cache}</div>", unsafe_allow_html=True)
                 st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-                st.download_button(label="💾 下载 DeepSeek AI 研报与号码组合", data=st.session_state.ai_report_cache, file_name="DeepSeek_量化智能组号.txt", mime="text/plain", use_container_width=True)
+                st.download_button(label="💾 下载纯净版 AI 分析报告", data=st.session_state.ai_report_cache, file_name="DeepSeek_量化智能决策.txt", mime="text/plain", use_container_width=True)
 
 with right_col:
     top_c1, top_c2, top_c3 = st.columns([3, 4, 2])
