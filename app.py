@@ -94,7 +94,7 @@ def ask_deepseek(prompt_text):
         ]
     }
     try:
-        res = requests.post(url, headers=headers, json=payload, timeout=40)
+        res = requests.post(url, headers=headers, json=payload, timeout=50)
         res.raise_for_status()
         return res.json()['choices'][0]['message']['content']
     except Exception as e:
@@ -167,7 +167,6 @@ def scan_top_trends(df, rule_str, top_n=10):
     results.sort(key=lambda x: x[0], reverse=True)
     return results[:top_n]
 
-# 🤖 底层单码扫盘算力引擎 (为 AI 提供数据)
 def get_hot_numbers_for_ai(df):
     hot_list = []
     for n in range(1, 81):
@@ -175,8 +174,7 @@ def get_hot_numbers_for_ai(df):
         score = (df_k['Close'].iloc[-1] - df_k['MA20'].iloc[-1]) + (df_k['MACD_HIST'].iloc[-1] * 2)
         hot_list.append((n, score))
     hot_list.sort(key=lambda x: x[1], reverse=True)
-    top_20 = [x[0] for x in hot_list[:20]]
-    return sorted(top_20)
+    return sorted([x[0] for x in hot_list[:20]])
 
 # ==========================================
 # 3. 核心布局：左右分栏
@@ -206,11 +204,10 @@ with left_col:
         fig.update_yaxes(gridcolor='#333333')
         st.plotly_chart(fig, use_container_width=True)
 
-        # 🤖 【极致进阶】DeepSeek 智能组号中心
-        with st.expander("🤖 DeepSeek 智算中心 - 盘面诊断 & 智能组号", expanded=True):
+        # 🤖 【核心升级】DeepSeek 智能组号中心
+        with st.expander("🤖 DeepSeek 智算中心 - 盘面诊断 & 全维智能组号", expanded=True):
             ai_c1, ai_c2 = st.columns(2)
             
-            # 功能1：诊断当前选中的号码
             if ai_c1.button("📉 诊断当前阵型", use_container_width=True):
                 latest = df_kline.iloc[-1]
                 p_close = round(latest['Close'], 2); p_ma5 = round(latest['MA5'], 2); p_ma20 = round(latest['MA20'], 2); p_macd = round(latest['MACD_HIST'], 2)
@@ -218,19 +215,19 @@ with left_col:
                 with st.spinner("AI 正在解析当前均线与动能..."):
                     st.session_state.ai_report_cache = ask_deepseek(prompt)
             
-            # 功能2：全盘扫描 + 智能组号
             if ai_c2.button("🔮 全盘扫描 & 智能组号", type="primary", use_container_width=True):
                 with st.spinner("后台算力正在扫描全盘 80 个号码的量能模型..."):
-                    # 1. 引擎算出最热的20个号码
                     hot_20 = get_hot_numbers_for_ai(df_raw)
                     hot_str = ", ".join([f"{n:02d}" for n in hot_20])
-                    
-                    # 2. 把热号喂给 DeepSeek 让它组合
-                    prompt = f"系统已通过底层算法，算出当前MACD底背离且均线呈多头排列的 Top 20 强势核心号码池为：[{hot_str}]。请作为高级量化策略师：1. 用一两句话分析目前这批热号的动能特征。2. 利用这20个强势号码，运用排列组合策略，为我精选推荐 3注【选10】号码，以及 3注【选9】号码。输出格式务必清晰排版，号码加粗。"
+                    # 提示词终极进化：覆盖选10到选2，加上最优选
+                    prompt = f"系统已通过底层算法，算出当前MACD底背离且均线呈多头排列的 Top 20 强势核心号码池为：[{hot_str}]。请作为高级量化策略师执行以下指令：\n1. 用一句话分析目前这批热号的动能特征。\n2. 利用这20个强势号码，运用排列组合策略，依次为我精选推荐【选10】、【选9】、【选8】、【选7】、【选6】、【选5】、【选4】、【选3】、【选2】的号码（每种玩法推荐 1 注即可）。\n3. 在最后，单独高亮指出你认为胜率最高、最值得投资的一组【👑终极最优选组合】。\n输出格式务必清晰排版，号码加粗。"
                     st.session_state.ai_report_cache = ask_deepseek(prompt)
             
             if st.session_state.ai_report_cache:
                 st.markdown(f"<div style='background-color:#1E1E1E; padding:15px; border-radius:8px; border-left:4px solid #FF4B4B; color:#E0E0E0; font-size: 14px;'>{st.session_state.ai_report_cache}</div>", unsafe_allow_html=True)
+                st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+                # ⬇️ 【新增】AI 报告专属导出按钮
+                st.download_button(label="💾 下载 DeepSeek AI 研报与号码组合", data=st.session_state.ai_report_cache, file_name="DeepSeek_量化智能组号.txt", mime="text/plain", use_container_width=True)
 
 with right_col:
     top_c1, top_c2, top_c3 = st.columns([3, 4, 2])
@@ -282,7 +279,7 @@ with right_col:
             
         export_text = " ".join([f"{n:02d}" for n in sorted(list(st.session_state.selected_nums))])
         with f_cols[9]:
-            st.download_button(label="导出", data=export_text, file_name="快乐8精选阵型.txt", mime="text/plain", key="bf_out")
+            st.download_button(label="导出", data=export_text, file_name="快乐8_手选组合.txt", mime="text/plain", key="bf_out")
 
     with tabs[2]:
         ic1, ic2, ic3 = st.columns(3)
@@ -320,6 +317,13 @@ with right_col:
                 st.session_state.selected_nums = set(combo)
                 st.session_state.hit_condition = h_cond
                 st.rerun()
+
+        # ⬇️ 【新增】指标 Top 10 专属导出按钮
+        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+        scan_export_text = f"【共振战法：{curr_rule}】均线多头与MACD底背离 最强 Top 10 组合：\n\n"
+        for idx, (score, combo, h_cond) in enumerate(st.session_state.scan_results):
+            scan_export_text += f"Top {idx+1}: " + " ".join([f"{n:02d}" for n in combo]) + "\n"
+        st.download_button(label="💾 一键导出这 10 组指标精选号码", data=scan_export_text, file_name=f"指标精选_{curr_rule}.txt", mime="text/plain", use_container_width=True, type="secondary")
 
     st.markdown("<hr style='margin: 8px 0; border-color: #333;'>", unsafe_allow_html=True)
     cond_c1, cond_c2, cond_c3 = st.columns([3, 4, 3])
