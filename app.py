@@ -18,14 +18,12 @@ st.markdown("""
     div[data-testid="stVerticalBlock"] { gap: 0.1rem !important; }
     div[data-testid="stButton"] button p, div[data-testid="stDownloadButton"] button p { white-space: nowrap !important; margin: 0 !important; font-size: 11px !important; }
     
-    /* 核心矩阵小圆球 */
     div[data-testid="stButton"] button {
         width: 26px !important; height: 26px !important; min-height: 26px !important;
         padding: 0 !important; border-radius: 50% !important; margin: 0 auto;
         transition: all 0.1s; box-shadow: 0 1px 2px rgba(0,0,0,0.1);
     }
     
-    /* 保护策略面板的长文本功能按钮与导出按钮 */
     div[data-testid="stButton"] button:has(p:contains("图")),
     div[data-testid="stButton"] button:has(p:contains("退")),
     div[data-testid="stButton"] button:has(p:contains("大于")),
@@ -40,10 +38,11 @@ st.markdown("""
     div[data-testid="stButton"] button:has(p:contains("定义")),
     div[data-testid="stButton"] button:has(p:contains("战法")),
     div[data-testid="stButton"] button:has(p:contains("向上")),
-    div[data-testid="stButton"] button:has(p:contains("生成")),
+    div[data-testid="stButton"] button:has(p:contains("诊断当前")),
+    div[data-testid="stButton"] button:has(p:contains("智能组号")),
     div[data-testid="stButton"] button:has(p:contains("🔥")),
     div[data-testid="stDownloadButton"] button {
-        width: 100% !important; border-radius: 4px !important; height: 26px !important; min-height: 26px !important;
+        width: 100% !important; border-radius: 4px !important; height: 28px !important; min-height: 28px !important;
     }
     
     div[data-testid="stButton"] button:has(p:contains("📈")) {
@@ -53,19 +52,19 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. 防弹级密钥读取与数据引擎
+# 1. 密钥、数据引擎与 DeepSeek 接口
 # ==========================================
 try:
     mxnzp = st.secrets.get("mxnzp_api", {})
     APP_ID = mxnzp.get("app_id", "")
     APP_SECRET = mxnzp.get("app_secret", "")
     if not APP_ID or not APP_SECRET:
-        st.error("❌ 基础数据密钥未配置。请在 Secrets 中配置 [mxnzp_api]。")
+        st.error("❌ API 密钥未配置。请检查 Secrets。")
         st.stop()
         
     DS_API_KEY = st.secrets.get("deepseek", {}).get("api_key", "")
 except Exception as e:
-    st.error(f"❌ 配置文件解析致命错误，请检查格式: {e}")
+    st.error(f"❌ 配置文件解析错误: {e}")
     st.stop()
 
 @st.cache_data(ttl=1800)
@@ -83,24 +82,23 @@ def fetch_data(issue_count=100):
     except Exception as e:
         return pd.DataFrame(), str(e)
 
-# DeepSeek AI 诊断函数
 def ask_deepseek(prompt_text):
-    if not DS_API_KEY: return "❌ 未检测到 DeepSeek API Key，请在 secrets 中配置。"
+    if not DS_API_KEY: return "❌ 未检测到 DeepSeek API Key，请在 secrets 中配置 [deepseek] api_key。"
     url = "https://api.deepseek.com/chat/completions"
     headers = {"Authorization": f"Bearer {DS_API_KEY}", "Content-Type": "application/json"}
     payload = {
         "model": "deepseek-chat",
         "messages": [
-            {"role": "system", "content": "你是一个顶级金融量化分析师兼彩票专家。你的任务是根据提供的净值K线、均线(MA)、MACD量能等参数，输出极简、专业、犀利的盘面诊断和操作建议。语气要冷峻客观。"},
+            {"role": "system", "content": "你是一个顶级金融量化分析师兼彩票数据专家。请使用冷峻、专业的华尔街量化投研报告风格回答。排版要清晰美观，使用 Markdown 加粗核心数字。"},
             {"role": "user", "content": prompt_text}
         ]
     }
     try:
-        res = requests.post(url, headers=headers, json=payload, timeout=20)
+        res = requests.post(url, headers=headers, json=payload, timeout=40)
         res.raise_for_status()
         return res.json()['choices'][0]['message']['content']
     except Exception as e:
-        return f"AI 诊断请求失败: {str(e)}"
+        return f"AI 智算中心请求超时或失败: {str(e)}"
 
 with st.spinner("正在连接数据中心..."):
     df_raw, status = fetch_data(50)
@@ -117,6 +115,7 @@ if 'hit_condition' not in st.session_state: st.session_state.hit_condition = 2
 if 'rand_count' not in st.session_state: st.session_state.rand_count = 10
 if 'ind_rule' not in st.session_state: st.session_state.ind_rule = "3码>=2"
 if 'scan_results' not in st.session_state: st.session_state.scan_results = []
+if 'ai_report_cache' not in st.session_state: st.session_state.ai_report_cache = ""
 
 def apply_filter(f_type):
     st.session_state.selected_nums.clear()
@@ -168,6 +167,17 @@ def scan_top_trends(df, rule_str, top_n=10):
     results.sort(key=lambda x: x[0], reverse=True)
     return results[:top_n]
 
+# 🤖 底层单码扫盘算力引擎 (为 AI 提供数据)
+def get_hot_numbers_for_ai(df):
+    hot_list = []
+    for n in range(1, 81):
+        df_k = generate_strategy_kline(df, [n], 1)
+        score = (df_k['Close'].iloc[-1] - df_k['MA20'].iloc[-1]) + (df_k['MACD_HIST'].iloc[-1] * 2)
+        hot_list.append((n, score))
+    hot_list.sort(key=lambda x: x[1], reverse=True)
+    top_20 = [x[0] for x in hot_list[:20]]
+    return sorted(top_20)
+
 # ==========================================
 # 3. 核心布局：左右分栏
 # ==========================================
@@ -183,10 +193,7 @@ with left_col:
         df_kline = generate_strategy_kline(df_raw, st.session_state.selected_nums, st.session_state.hit_condition)
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
         
-        fig.add_trace(go.Candlestick(
-            x=df_kline['期号'], open=df_kline['Open'], high=df_kline['High'], low=df_kline['Low'], close=df_kline['Close'],
-            increasing_line_color='#FF4B4B', decreasing_line_color='#00D166', name='资金曲线'
-        ), row=1, col=1)
+        fig.add_trace(go.Candlestick(x=df_kline['期号'], open=df_kline['Open'], high=df_kline['High'], low=df_kline['Low'], close=df_kline['Close'], increasing_line_color='#FF4B4B', decreasing_line_color='#00D166', name='资金曲线'), row=1, col=1)
         fig.add_trace(go.Scatter(x=df_kline['期号'], y=df_kline['MA5'], mode='lines', name='MA5', line=dict(color='#F2B134', width=1)), row=1, col=1)
         fig.add_trace(go.Scatter(x=df_kline['期号'], y=df_kline['MA10'], mode='lines', name='MA10', line=dict(color='#00B4D8', width=1)), row=1, col=1)
         fig.add_trace(go.Scatter(x=df_kline['期号'], y=df_kline['MA20'], mode='lines', name='MA20', line=dict(color='#00D166', width=1)), row=1, col=1)
@@ -195,20 +202,35 @@ with left_col:
         fig.add_trace(go.Bar(x=df_kline['期号'], y=df_kline['MACD_HIST'], marker_color=macd_colors, name='MACD量能'), row=2, col=1)
         fig.add_trace(go.Scatter(x=df_kline['期号'], y=df_kline['MACD'], mode='lines', name='DIF', line=dict(color='#FFF', width=1)), row=2, col=1)
 
-        fig.update_layout(height=580, template="plotly_dark", hovermode="x unified", margin=dict(l=0, r=0, t=10, b=0), xaxis_rangeslider_visible=False)
+        fig.update_layout(height=520, template="plotly_dark", hovermode="x unified", margin=dict(l=0, r=0, t=10, b=0), xaxis_rangeslider_visible=False)
         fig.update_yaxes(gridcolor='#333333')
         st.plotly_chart(fig, use_container_width=True)
 
-        # 🤖 DeepSeek AI 诊断面板
-        with st.expander("🤖 DeepSeek 智算中心 - 盘面深度诊断", expanded=False):
-            if st.button("生成 AI 研报", type="primary"):
+        # 🤖 【极致进阶】DeepSeek 智能组号中心
+        with st.expander("🤖 DeepSeek 智算中心 - 盘面诊断 & 智能组号", expanded=True):
+            ai_c1, ai_c2 = st.columns(2)
+            
+            # 功能1：诊断当前选中的号码
+            if ai_c1.button("📉 诊断当前阵型", use_container_width=True):
                 latest = df_kline.iloc[-1]
                 p_close = round(latest['Close'], 2); p_ma5 = round(latest['MA5'], 2); p_ma20 = round(latest['MA20'], 2); p_macd = round(latest['MACD_HIST'], 2)
-                ai_prompt = f"分析标的号码：{num_str}。触发条件：≥{st.session_state.hit_condition}。当前参数：收盘价净值 {p_close}，MA5均线 {p_ma5}，MA20均线(牛熊线) {p_ma20}，MACD动能柱 {p_macd}。判断目前处于热态爆发、震荡还是冷态阴跌？给出明确的操作建议。"
-                
-                with st.spinner("DeepSeek AI 正在推演底层逻辑..."):
-                    ai_report = ask_deepseek(ai_prompt)
-                st.markdown(f"<div style='background-color:#1E1E1E; padding:15px; border-radius:8px; border-left:4px solid #FF4B4B; color:#E0E0E0;'>{ai_report}</div>", unsafe_allow_html=True)
+                prompt = f"分析标的：[{num_str}]。条件：≥{st.session_state.hit_condition}。当前收盘净值 {p_close}，MA20(牛熊线) {p_ma20}，MACD动能柱 {p_macd}。请给出极简的趋势判定（上涨/震荡/下跌）和操作建议。"
+                with st.spinner("AI 正在解析当前均线与动能..."):
+                    st.session_state.ai_report_cache = ask_deepseek(prompt)
+            
+            # 功能2：全盘扫描 + 智能组号
+            if ai_c2.button("🔮 全盘扫描 & 智能组号", type="primary", use_container_width=True):
+                with st.spinner("后台算力正在扫描全盘 80 个号码的量能模型..."):
+                    # 1. 引擎算出最热的20个号码
+                    hot_20 = get_hot_numbers_for_ai(df_raw)
+                    hot_str = ", ".join([f"{n:02d}" for n in hot_20])
+                    
+                    # 2. 把热号喂给 DeepSeek 让它组合
+                    prompt = f"系统已通过底层算法，算出当前MACD底背离且均线呈多头排列的 Top 20 强势核心号码池为：[{hot_str}]。请作为高级量化策略师：1. 用一两句话分析目前这批热号的动能特征。2. 利用这20个强势号码，运用排列组合策略，为我精选推荐 3注【选10】号码，以及 3注【选9】号码。输出格式务必清晰排版，号码加粗。"
+                    st.session_state.ai_report_cache = ask_deepseek(prompt)
+            
+            if st.session_state.ai_report_cache:
+                st.markdown(f"<div style='background-color:#1E1E1E; padding:15px; border-radius:8px; border-left:4px solid #FF4B4B; color:#E0E0E0; font-size: 14px;'>{st.session_state.ai_report_cache}</div>", unsafe_allow_html=True)
 
 with right_col:
     top_c1, top_c2, top_c3 = st.columns([3, 4, 2])
